@@ -33,7 +33,7 @@ WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9"
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-3.6-flash")
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 # تقليل الحجم الأقصى للمخرجات لتجنب تجاوز حد تليجرام
 GENERATION_CONFIG = {
