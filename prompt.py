@@ -7,7 +7,7 @@ import asyncio
 import numpy as np
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
-from PIL import Image, ImageEnhance, ImageFilter
+from PIL import Image, ImageEnhance
 import cv2
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from telegram.ext import (
@@ -89,28 +89,22 @@ async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.warning(f"تعذر إرسال بيانات المستخدم للأدمن: {e}")
 
-async def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
+def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     """تحسين الجودة والحدة ومضاعفة الأبعاد محلياً مجاناً 100%"""
     image_np = np.frombuffer(photo_bytes, np.uint8)
     img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
-    # 1. تكبير الأبعاد بمقدار 2x باستخدام interpolation عالي الجودة (LANCZOS4)
+    # 1. تكبير الأبعاد بمقدار 2x
     height, width = img.shape[:2]
     scaled_img = cv2.resize(img, (width * 2, height * 2), interpolation=cv2.INTER_LANCZOS4)
 
-    # 2. إزالة الضوضاء والتغبيش (Denoising)
+    # 2. إزالة الضوضاء والتغبيش
     denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 3, 3, 7, 21)
 
-    # 3. تحويل إلى PIL لإجراء تعديلات إضافية على الألوان والحدة
+    # 3. تحسين حدة التفاصيل والتباين عبر PIL
     pil_img = Image.fromarray(cv2.cvtColor(denoised, cv2.COLOR_BGR2RGB))
-    
-    # زيادة حدة التفاصيل (Sharpness)
-    enhancer_sharp = ImageEnhance.Sharpness(pil_img)
-    pil_img = enhancer_sharp.enhance(1.8)
-
-    # ضبط التباين والألوان (Contrast & Color Enhancement)
-    enhancer_contrast = ImageEnhance.Contrast(pil_img)
-    pil_img = enhancer_contrast.enhance(1.1)
+    pil_img = ImageEnhance.Sharpness(pil_img).enhance(1.8)
+    pil_img = ImageEnhance.Contrast(pil_img).enhance(1.1)
 
     output_stream = io.BytesIO()
     pil_img.save(output_stream, format="JPEG", quality=98)
@@ -358,7 +352,8 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
     await query.edit_message_text(t(context, "enhancing"))
 
     try:
-        enhanced_stream = await asyncio.to_thread(local_upscale_image, photo_bytes)
+        loop = asyncio.get_running_loop()
+        enhanced_stream = await loop.run_in_executor(None, local_upscale_image, photo_bytes)
         
         post_action_keyboard = [
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
@@ -556,7 +551,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("🤖 البوت يعمل بنجاح مع معالج الصور المحلي المجاني...")
+    print("🤖 البوت يعمل بنجاح...")
     app.run_polling()
 
 if __name__ == "__main__":
