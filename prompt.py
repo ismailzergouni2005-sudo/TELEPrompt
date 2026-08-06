@@ -27,6 +27,7 @@ logging.basicConfig(
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # معرف القناة لإرسال الإشعارات
 
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
@@ -61,8 +62,10 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
-async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
-    if not ADMIN_ID:
+async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
+    """دالة إرسال الإشعارات لقناة التليجرام"""
+    target_id = CHANNEL_ID or ADMIN_ID
+    if not target_id:
         return
 
     username = f"@{user.username}" if user.username else "لا يوجد"
@@ -70,38 +73,37 @@ async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     last_name = user.last_name or ""
     full_name = f"{first_name} {last_name}".strip()
     
-    admin_message = (
-        "👤 **إشعار نشاط مستخدم:**\n"
+    channel_message = (
+        "🔔 **إشعار جديد في البوت:**\n"
         "━━━━━━━━━━━━━━━━━━━\n"
-        f"🔹 **الحدث:** {action}\n"
-        f"🔹 **الاسم:** {full_name}\n"
-        f"🔹 **اليوزر:** {username}\n"
-        f"🔹 **المعرف (ID):** `{user.id}`\n"
-        f"🔹 **رابط الحساب:** [{first_name}](tg://user?id={user.id})\n"
+        f"📌 **الحدث:** {action}\n"
+        f"👤 **الاسم:** {full_name}\n"
+        f"🏷️ **اليوزر:** {username}\n"
+        f"🆔 **المعرف:** `{user.id}`\n"
+        f"🔗 **الرابط:** [{first_name}](tg://user?id={user.id})\n"
     )
 
     try:
+        # يدعم الإرسال للقناة السلسة سواء باستخدام الـ Username أو הـ Channel ID
+        chat_id_val = int(target_id) if target_id.startswith("-") or target_id.isdigit() else target_id
         await context.bot.send_message(
-            chat_id=int(ADMIN_ID),
-            text=admin_message,
+            chat_id=chat_id_val,
+            text=channel_message,
             parse_mode="Markdown"
         )
     except Exception as e:
-        logging.warning(f"تعذر إرسال بيانات المستخدم للأدمن: {e}")
+        logging.warning(f"تعذر إرسال الإشعار للقناة: {e}")
 
 def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
-    """تحسين الجودة والحدة ومضاعفة الأبعاد محلياً مجاناً 100%"""
+    """تحسين الجودة والحدة ومضاعفة الأبعاد محلياً"""
     image_np = np.frombuffer(photo_bytes, np.uint8)
     img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
-    # 1. تكبير الأبعاد بمقدار 2x
     height, width = img.shape[:2]
     scaled_img = cv2.resize(img, (width * 2, height * 2), interpolation=cv2.INTER_LANCZOS4)
 
-    # 2. إزالة الضوضاء والتغبيش
     denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 3, 3, 7, 21)
 
-    # 3. تحسين حدة التفاصيل والتباين عبر PIL
     pil_img = Image.fromarray(cv2.cvtColor(denoised, cv2.COLOR_BGR2RGB))
     pil_img = ImageEnhance.Sharpness(pil_img).enhance(1.8)
     pil_img = ImageEnhance.Contrast(pil_img).enhance(1.1)
@@ -310,7 +312,8 @@ async def show_standard_ratio_menu(context, query):
     await query.edit_message_text(t(context, "choose_standard_ratio"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await notify_admin(update.effective_user, "تشغيل البوت /start", context)
+    # إرسال إشعار للقناة عند دخول أي مستخدم جديد
+    await notify_channel(update.effective_user, "قام بتشغيل البوت (/start)", context)
 
     if "ui_lang" not in context.user_data:
         await show_ui_language_menu(update.message.reply_text)
@@ -325,6 +328,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_bytes = await photo_file.download_as_bytearray()
     context.user_data["photo_bytes"] = photo_bytes
     context.user_data["photo_message_id"] = update.message.message_id
+
+    # إرسال إشعار للقناة بمجرد إرسال صورة
+    await notify_channel(update.effective_user, "قام بإرسال صورة جديدة 📸", context)
 
     try:
         await context.bot.set_message_reaction(
@@ -341,7 +347,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await show_main_mode_menu(context, update.message.reply_text)
 
-async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
+async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     photo_bytes = context.user_data.get("photo_bytes")
     photo_message_id = context.user_data.get("photo_message_id")
 
@@ -370,12 +376,15 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
             reply_to_message_id=photo_message_id,
         )
         await query.delete_message()
+        
+        # إشعار للقناة باكتمل تحسين الجودة
+        await notify_channel(user, "قام بزيادة دقة صورة (HD Upscale) 🚀", context)
 
     except Exception as e:
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
-async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
+async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     selected_lang = context.user_data.get("selected_lang", "en")
     selected_length = context.user_data.get("selected_length", "medium")
     selected_ratio = context.user_data.get("selected_ratio")
@@ -442,6 +451,9 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         )
         await query.delete_message()
 
+        # إشعار للقناة بانتهاء استخراج البرومبت
+        await notify_channel(user, "قام باستخراج برومبت من صورة 📝", context)
+
     except Exception as e:
         logging.error(f"خطأ إرسال الرسالة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
@@ -467,7 +479,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "mode_upscale":
-        await process_upscale(query, context, update.effective_chat.id)
+        await process_upscale(query, context, update.effective_chat.id, update.effective_user)
         return
 
     if data == "back_to_main_mode":
@@ -526,12 +538,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(t(context, "session_expired"))
             return
         context.user_data["selected_ratio"] = compute_image_ratio(photo_bytes)
-        await generate_and_send_prompt(query, context, update.effective_chat.id)
+        await generate_and_send_prompt(query, context, update.effective_chat.id, update.effective_user)
         return
 
     if data.startswith("ratio_std_"):
         context.user_data["selected_ratio"] = data.replace("ratio_std_", "", 1)
-        await generate_and_send_prompt(query, context, update.effective_chat.id)
+        await generate_and_send_prompt(query, context, update.effective_chat.id, update.effective_user)
         return
 
 def main():
