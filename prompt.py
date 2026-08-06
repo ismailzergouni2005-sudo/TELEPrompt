@@ -77,6 +77,14 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"OK - Bot is Alive")
 
+    def do_HEAD(self):
+        # بعض أدوات المراقبة (Better Stack، UptimeRobot، إلخ) ترسل HEAD بدل GET
+        # للفحص الدوري؛ بدون هذا الميثود يرد BaseHTTPRequestHandler تلقائياً
+        # بخطأ 501 Unsupported method فتظهر الخدمة "Down" رغم أنها تعمل فعلياً.
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+
     def log_message(self, format, *args):
         pass
 
