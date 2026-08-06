@@ -441,9 +441,13 @@ def _run_genai_image(instruction, image, models_order=None):
         for model_name in models_to_try:
             try:
                 model = genai.GenerativeModel(model_name)
+                # نمرر generation_config كـ dict عادي (وليس عبر genai.types.GenerationConfig)
+                # لأن بعض إصدارات مكتبة google-generativeai القديمة لا تعرف معامل
+                # response_modalities في الـ constructor رغم أن الـ API نفسه يدعمه،
+                # بينما تمريره كـ dict يتجاوز هذا القيد لأنه يمر مباشرة للبروتوكول الأساسي.
                 response = model.generate_content(
                     [instruction, image],
-                    generation_config=genai.types.GenerationConfig(**IMAGE_GENERATION_CONFIG),
+                    generation_config=IMAGE_GENERATION_CONFIG,
                 )
                 for part in response.candidates[0].content.parts:
                     if getattr(part, "inline_data", None) and part.inline_data.data:
