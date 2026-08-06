@@ -25,17 +25,22 @@ logging.basicConfig(
 )
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
+
+# قراءة مفاتيح API من بيئة Render بأمان (تفصل بين المفاتيح الفاصلة ",")
+raw_keys = os.getenv("API_KEYS", "")
+API_KEYS = [key.strip() for key in raw_keys.split(",") if key.strip()]
 
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-2.5-flash")
+AVAILABLE_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-flash",
+]
 
-# تقليل الحجم الأقصى للمخرجات لتجنب تجاوز حد تليجرام
 GENERATION_CONFIG = {
     "max_output_tokens": 1500,
     "temperature": 0.7,
@@ -171,6 +176,7 @@ TEXTS = {
         "btn_retry": "🔄 استخراج بمستوى/لغة أخرى",
         "btn_new_photo": "📸 أرسل صورة جديدة",
         "error_generation": "❌ حدث خطأ أثناء المعالجة: ",
+        "quota_error": "⚠️ تم تجاوز كافة حدود الطلبات المتاحة حالياً. يرجى المحاولة لاحقاً.",
         "ready_for_new": "📸 مرحباً بك مجدداً! يمكنك إرسال صورة جديدة الآن.",
     },
     "en": {
@@ -198,6 +204,7 @@ TEXTS = {
         "btn_retry": "🔄 Extract with other options",
         "btn_new_photo": "📸 Send a new image",
         "error_generation": "❌ An error occurred: ",
+        "quota_error": "⚠️ API limit reached for all available keys. Please wait a moment.",
         "ready_for_new": "📸 Ready for a new photo! Send your image.",
     },
 }
@@ -389,6 +396,28 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
+def _run_genai(instruction, image):
+    """الدالة الداخلية للتنقل بين المفاتيح والنماذج بأسلوب متزامن متوافق مع run_in_executor"""
+    last_error = None
+    
+    for api_key in API_KEYS:
+        genai.configure(api_key=api_key)
+        for model_name in AVAILABLE_MODELS:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content([instruction, image], generation_config=GENERATION_CONFIG)
+                if response and response.text:
+                    return response.text.strip()
+            except Exception as e:
+                last_error = e
+                continue
+
+    raise last_error or RuntimeError("فشل الاتصال بكل المفاتيح والنماذج.")
+
+async def generate_prompt_with_fallback(instruction, image):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run_genai, instruction, image)
+
 async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     selected_lang = context.user_data.get("selected_lang", "en")
     selected_length = context.user_data.get("selected_length", "medium")
@@ -418,29 +447,18 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
 
     image = Image.open(io.BytesIO(photo_bytes))
     
-    max_retries = 3
-    response = None
-    last_error = None
-    
-    for attempt in range(max_retries):
-        try:
-            response = model.generate_content([instruction, image], generation_config=GENERATION_CONFIG)
-            if response and response.text:
-                break
-        except Exception as e:
-            last_error = e
-            logging.warning(f"محاولة فاشلة ({attempt + 1}/{max_retries}): {e}")
-            await asyncio.sleep(1)
-
-    if not response or not response.text:
-        logging.error(f"فشل التوليد نهائياً: {last_error}")
-        await query.message.reply_text(t(context, "error_generation") + str(last_error))
+    try:
+        generated_prompt = await generate_prompt_with_fallback(instruction, image)
+    except Exception as e:
+        logging.error(f"فشل التوليد عبر كل المفاتيح: {e}")
+        err_str = str(e)
+        if "429" in err_str or "quota" in err_str.lower():
+            await query.message.reply_text(t(context, "quota_error"))
+        else:
+            await query.message.reply_text(t(context, "error_generation") + err_str)
         return
 
     try:
-        generated_prompt = response.text.strip()
-
-        # القص الآمن إذا كان النص المولد أطول من حد تليجرام المسموح للرسالة
         if len(generated_prompt) > 3800:
             generated_prompt = generated_prompt[:3800] + "..."
 
@@ -555,6 +573,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 def main():
+    if not API_KEYS:
+        logging.warning("⚠️ لم يتم العثور على أي مفتاح في متغير API_KEYS!")
+
     threading.Thread(target=start_health_server, daemon=True).start()
 
     request = HTTPXRequest(
@@ -571,7 +592,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("🤖 البوت يعمل بنجاح...")
+    print("🤖 البوت يعمل بنجاح مع تدوير المفاتيح التلقائي...")
     app.run_polling()
 
 if __name__ == "__main__":
