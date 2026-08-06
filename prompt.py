@@ -7,7 +7,7 @@ import asyncio
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
-from PIL import Image
+from PIL import Image, ImageEnhance
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from telegram.ext import (
     Application,
@@ -61,7 +61,6 @@ def run_dummy_server():
     server.serve_forever()
 
 async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
-    """دالة لإرسال بيانات المستخدم إلى الأدمن"""
     if not ADMIN_ID:
         return
 
@@ -71,7 +70,7 @@ async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     full_name = f"{first_name} {last_name}".strip()
     
     admin_message = (
-        "👤 **إشعار مستخدم جديد / نشاط:**\n"
+        "👤 **إشعار نشاط مستخدم:**\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         f"🔹 **الحدث:** {action}\n"
         f"🔹 **الاسم:** {full_name}\n"
@@ -89,32 +88,56 @@ async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.warning(f"تعذر إرسال بيانات المستخدم للأدمن: {e}")
 
+def enhance_image_quality(photo_bytes: bytearray, scale_factor: int = 2) -> io.BytesIO:
+    """دالة تحسين الجودة وتكبير الأبعاد مع ضبط الوضوح والتباين"""
+    image = Image.open(io.BytesIO(photo_bytes)).convert("RGB")
+    new_size = (image.width * scale_factor, image.height * scale_factor)
+    
+    # تكبير دقيق باستخدام فلتر LANCZOS
+    enhanced_image = image.resize(new_size, Image.Resampling.LANCZOS)
+    
+    # تحسين حدة الوضوح (Sharpening)
+    sharpness = ImageEnhance.Sharpness(enhanced_image)
+    enhanced_image = sharpness.enhance(1.4)
+    
+    # تحسين التباين (Contrast)
+    contrast = ImageEnhance.Contrast(enhanced_image)
+    enhanced_image = contrast.enhance(1.1)
+    
+    output_stream = io.BytesIO()
+    enhanced_image.save(output_stream, format="JPEG", quality=95)
+    output_stream.seek(0)
+    return output_stream
+
 def get_welcome_text(user, ui_lang="ar"):
     user_mention = f"[{user.first_name}](tg://user?id={user.id})"
     
     if ui_lang == "ar":
         return (
-            f"✨ أهلاً بك يا {user_mention} في **بوت استخراج البرومبت الاحترافي**! ✨\n"
+            f"✨ أهلاً بك يا {user_mention} في **بوت استخراج البرومبت وتحسين الصور**! ✨\n"
             "━━━━━━━━━━━━━━━━━━━\n\n"
             "🛠️ **كيف يعمل هذا البوت؟**\n"
-            "1️⃣ **أرسل أي صورة:** سيتعرف البوت عليها ويقوم بتحليلها باستخدام الذكاء الاصطناعي.\n"
-            "2️⃣ **حدد الخيارات:** اختر لغة البرومبت (عربي/إنجليزي)، ومستوى التفصيل، ونسبة أبعاد الصورة.\n"
-            "3️⃣ **انسخ البرومبت:** يُنشئ البوت وصفاً دقيقاً للغاية جاهزاً للنسخ بضغطة واحدة لاستخدامه في مولدات الصور.\n\n"
+            "1️⃣ **أرسل أي صورة:** سيتعرف البوت عليها تلقائياً.\n"
+            "2️⃣ **اختر الخدمة:** استخراج البرومبت بالذكاء الاصطناعي أو تحسين جودة الصورة وتكبيرها.\n"
+            "3️⃣ **استلم النتيجة:** احصل على البرومبت المنسوخ أو الصورة بعد رفع جودتها!\n\n"
             "👇 **ابدأ الآن بإرسال صورتك!**"
         )
     else:
         return (
-            f"✨ Welcome {user_mention} to the **Professional Prompt Extractor Bot**! ✨\n"
+            f"✨ Welcome {user_mention} to **Prompt Extractor & Image Enhancer Bot**! ✨\n"
             "━━━━━━━━━━━━━━━━━━━\n\n"
             "🛠️ **How does this bot work?**\n"
-            "1️⃣ **Send an Image:** The bot will analyze every detail using AI.\n"
-            "2️⃣ **Select Options:** Choose prompt language, detail level, and aspect ratio.\n"
-            "3️⃣ **Copy Prompt:** You get a hyper-precise prompt ready to copy in one tap for AI generators!\n\n"
+            "1️⃣ **Send an Image:** The bot will analyze it automatically.\n"
+            "2️⃣ **Choose Action:** Extract prompt via AI or upscale and enhance image quality.\n"
+            "3️⃣ **Get Results:** Copy your prompt or download your enhanced image!\n\n"
             "👇 **Start now by sending your image!**"
         )
 
 TEXTS = {
     "ar": {
+        "choose_main_mode": "🎯 **اختر الخدمة المطلوبة للصورة:**",
+        "btn_extract_prompt": "📝 استخراج البرومبت (Prompt)",
+        "btn_upscale_image": "🖼️ تحسين جودة الصورة (Upscale HD)",
         "choose_prompt_lang": "🌐 **الخطوة 1/3:** اختر لغة البرومبت المطلوب:",
         "choose_detail": "⚙️ **الخطوة 2/3:** اختر مستوى تفصيل البرومبت:",
         "choose_ratio": "📐 **الخطوة 3/3:** اختر مقاس/نسبة أبعاد الصورة:",
@@ -124,39 +147,46 @@ TEXTS = {
         "btn_detailed": "🔍 تفصيلي وفائق الدقة (شامل جداً)",
         "btn_ratio_same": "🖼️ نفس مقاس الصورة المرسلة",
         "btn_ratio_standard": "📏 مقاس عام (اختيار نسبة قياسية)",
-        "btn_back": "🔙 رجوع للغة",
+        "btn_back": "🔙 رجوع",
         "btn_back_detail": "🔙 رجوع لمستوى التفصيل",
         "btn_cancel": "❌ إلغاء",
         "cancelled": "🚫 تم إلغاء العملية الحالية. أرسل صورة جديدة في أي وقت.",
         "session_expired": "⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة من جديد.",
         "analyzing": "⏳ جاري تحليل عناصر الصورة واستخراج البرومبت...",
+        "enhancing": "⚡ جاري تحسين الجودة ومعالجة أبعاد الصورة...",
         "success_title": "✅ **تم استخراج البرومبت بنجاح!**\n*(اضغط على النص أدناه لنسخه فوراً)*\n\n",
+        "success_enhance": "✨ **تم تحسين جودة الصورة بنجاح وتكبير أبعادها!**",
         "btn_retry": "🔄 استخراج بمستوى/لغة أخرى",
         "btn_new_photo": "📸 أرسل صورة جديدة",
-        "error_generation": "❌ حدث خطأ أثناء تحليل الصورة: ",
-        "ready_for_new": "📸 مرحباً بك مجدداً! يمكنك إرسال صورة جديدة الآن لاستخراج البرومبت الخاص بها.",
+        "error_generation": "❌ حدث خطأ أثناء المعالجة: ",
+        "ready_for_new": "📸 مرحباً بك مجدداً! يمكنك إرسال صورة جديدة الآن.",
     },
     "en": {
-        "choose_prompt_lang": "🌐 **Step 1/3:** Choose the language of the prompt:",
-        "choose_detail": "⚙️ **Step 2/3:** Choose the detail level of the prompt:",
-        "choose_ratio": "📐 **Step 3/3:** Choose the image size / aspect ratio:",
-        "choose_standard_ratio": "📐 Choose the standard aspect ratio:",
+        "choose_main_mode": "🎯 **Choose the service for your image:**",
+        "btn_extract_prompt": "📝 Extract Prompt",
+        "btn_upscale_image": "🖼️ Enhance Image Quality (Upscale HD)",
+        "choose_prompt_lang": "🌐 **Step 1/3:** Choose prompt language:",
+        "choose_detail": "⚙️ **Step 2/3:** Choose detail level:",
+        "choose_ratio": "📐 **Step 3/3:** Choose aspect ratio:",
+        "choose_standard_ratio": "📐 Choose standard aspect ratio:",
         "btn_short": "⚡ Short & Concise",
         "btn_medium": "⚖️ Medium",
         "btn_detailed": "🔍 Detailed & Ultra-Precise",
         "btn_ratio_same": "🖼️ Same as sent image",
         "btn_ratio_standard": "📏 Standard ratio",
-        "btn_back": "🔙 Back to language",
+        "btn_back": "🔙 Back",
         "btn_back_detail": "🔙 Back to detail level",
         "btn_cancel": "❌ Cancel",
-        "cancelled": "🚫 Operation cancelled. You can send a new image anytime.",
+        "cancelled": "🚫 Operation cancelled. Send a new image anytime.",
         "session_expired": "⚠️ Session expired. Please resend the image.",
-        "analyzing": "⏳ Analyzing image elements and extracting prompt...",
+        "analyzing": "⏳ Analyzing image and extracting prompt...",
+        "enhancing": "⚡ Enhancing quality and scaling up image...",
         "success_title": "✅ **Prompt extracted successfully!**\n*(Tap below to copy)*\n\n",
-        "btn_retry": "🔄 Extract with another options",
+        "success_enhance": "✨ **Image quality enhanced successfully!**",
+        "btn_retry": "🔄 Extract with other options",
         "btn_new_photo": "📸 Send a new image",
         "error_generation": "❌ An error occurred: ",
-        "ready_for_new": "📸 Ready for a new photo! Please send your image.",
+        "ready_for_new": "📸 Ready for a new photo! Send your image.",
     },
 }
 
@@ -210,16 +240,28 @@ async def show_ui_language_menu(send_func):
         reply_markup=reply_markup,
     )
 
-async def show_prompt_language_menu(context, send_func):
+async def show_main_mode_menu(context, send_func):
+    keyboard = [
+        [InlineKeyboardButton(t(context, "btn_extract_prompt"), callback_data="mode_prompt")],
+        [InlineKeyboardButton(t(context, "btn_upscale_image"), callback_data="mode_upscale")],
+        [InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await send_func(t(context, "choose_main_mode"), reply_markup=reply_markup, parse_mode="Markdown")
+
+async def show_prompt_language_menu(context, query):
     keyboard = [
         [
             InlineKeyboardButton("🇩🇿 العربية", callback_data="lang_ar"),
             InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
         ],
-        [InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
+        [
+            InlineKeyboardButton(t(context, "btn_back"), callback_data="back_to_main_mode"),
+            InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")
+        ],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await send_func(t(context, "choose_prompt_lang"), reply_markup=reply_markup, parse_mode="Markdown")
+    await query.edit_message_text(t(context, "choose_prompt_lang"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def show_detail_menu(context, query):
     keyboard = [
@@ -266,8 +308,7 @@ async def show_standard_ratio_menu(context, query):
     await query.edit_message_text(t(context, "choose_standard_ratio"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # إرسال إشعار للأدمن بدخول مستخدم جديد
-    await notify_admin(update.effective_user, "دخول البوت /start", context)
+    await notify_admin(update.effective_user, "تشغيل البوت /start", context)
 
     if "ui_lang" not in context.user_data:
         await show_ui_language_menu(update.message.reply_text)
@@ -296,7 +337,41 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_ui_language_menu(update.message.reply_text)
         return
 
-    await show_prompt_language_menu(context, update.message.reply_text)
+    await show_main_mode_menu(context, update.message.reply_text)
+
+async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
+    photo_bytes = context.user_data.get("photo_bytes")
+    photo_message_id = context.user_data.get("photo_message_id")
+
+    if not photo_bytes:
+        await query.edit_message_text(t(context, "session_expired"))
+        return
+
+    await query.edit_message_text(t(context, "enhancing"))
+
+    try:
+        # تحسين الصورة
+        enhanced_stream = enhance_image_quality(photo_bytes, scale_factor=2)
+        
+        post_action_keyboard = [
+            [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
+        ]
+        reply_markup = InlineKeyboardMarkup(post_action_keyboard)
+
+        await context.bot.send_document(
+            chat_id=chat_id,
+            document=enhanced_stream,
+            filename="enhanced_image.jpg",
+            caption=t(context, "success_enhance"),
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+            reply_to_message_id=photo_message_id,
+        )
+        await query.delete_message()
+
+    except Exception as e:
+        logging.error(f"خطأ أثناء تحسين الصورة: {e}")
+        await query.message.reply_text(t(context, "error_generation") + str(e))
 
 async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
     selected_lang = context.user_data.get("selected_lang", "en")
@@ -379,10 +454,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["ui_lang"] = ui_lang
 
         if context.user_data.get("photo_bytes"):
-            await show_prompt_language_menu(context, query.edit_message_text)
+            await show_main_mode_menu(context, query.edit_message_text)
         else:
             await query.delete_message()
             await send_welcome_payload(update.effective_chat.id, update.effective_user, context)
+        return
+
+    if data == "mode_prompt":
+        await show_prompt_language_menu(context, query)
+        return
+
+    if data == "mode_upscale":
+        await process_upscale(query, context, update.effective_chat.id)
+        return
+
+    if data == "back_to_main_mode":
+        await show_main_mode_menu(context, query.edit_message_text)
         return
 
     if data == "new_photo_request":
@@ -403,7 +490,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "back_to_lang":
-        await show_prompt_language_menu(context, query.edit_message_text)
+        await show_prompt_language_menu(context, query)
         return
 
     if data == "back_to_detail":
@@ -462,7 +549,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("🤖 البوت يعمل الآن بنجاح...")
+    print("🤖 البوت يعمل الآن بنجاح مع خاصية تحسين جودة الصور...")
     app.run_polling()
 
 if __name__ == "__main__":
