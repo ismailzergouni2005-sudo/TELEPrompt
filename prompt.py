@@ -3,6 +3,7 @@ import io
 import math
 import logging
 import threading
+import asyncio
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
@@ -26,7 +27,6 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
 
-# رابط الصورة ومعرف الملصق الخاص بك
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
@@ -35,8 +35,8 @@ model = genai.GenerativeModel("gemini-3.6-flash")
 
 GENERATION_CONFIG = {
     "max_output_tokens": 4096,
-    "temperature": 0.9,
-    "top_p": 0.95,
+    "temperature": 0.7,
+    "top_p": 0.9,
 }
 
 STANDARD_RATIOS = [
@@ -140,10 +140,10 @@ def compute_image_ratio(photo_bytes) -> str:
         image = Image.open(io.BytesIO(photo_bytes))
         width, height = image.size
         divisor = math.gcd(width, height) or 1
-        return f"{width // divisor}:{height // divisor} ({width}x{height}px)"
+        return f"{width // divisor}:{height // divisor}"
     except Exception as e:
         logging.warning(f"تعذر حساب نسبة أبعاد الصورة: {e}")
-        return "غير محدد / Unspecified"
+        return "1:1"
 
 async def send_welcome_payload(chat_id, user, context):
     ui_lang = context.user_data.get("ui_lang", "ar")
@@ -280,22 +280,42 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
     await query.edit_message_text(t(context, "analyzing"))
 
     system_instructions = {
-        ("ar", "short"): "اكتب برومبت قصير وموجز باللغة العربية...",
-        ("ar", "medium"): "اكتب برومبت متوسط الطول باللغة العربية...",
-        ("ar", "detailed"): "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق...",
-        ("en", "short"): "Write a concise image generation prompt in English...",
-        ("en", "medium"): "Write a medium-length image generation prompt in English...",
-        ("en", "detailed"): "Analyze this image with maximum possible depth and precision...",
+        ("ar", "short"): "اكتب برومبت قصير وموجز لوصف هذه الصورة لاستخدامه في الذكاء الاصطناعي.",
+        ("ar", "medium"): "اكتب برومبت متوسط الطول وشامل لوصف هذه الصورة لاستخدامه في توليد الصور.",
+        ("ar", "detailed"): "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق واكتب برومبت تفصيلي جداً شامل الإضاءة والزوايا والتأثيرات.",
+        ("en", "short"): "Write a short and concise image generation prompt describing this image.",
+        ("en", "medium"): "Write a detailed image generation prompt describing this image.",
+        ("en", "detailed"): "Write an ultra-detailed, highly comprehensive image generation prompt covering subject, lighting, style, background, and camera angle.",
     }
 
     instruction = system_instructions.get((selected_lang, selected_length), "")
 
     if selected_ratio:
-        instruction += f"\n\nAspect ratio required: \"{selected_ratio}\"."
+        instruction += f"\nInclude aspect ratio: --ar {selected_ratio}"
+
+    image = Image.open(io.BytesIO(photo_bytes))
+    
+    # محاولة التوليد مع إمكانية إعادة المحاولة عند حدوث أخطاء خادم 500
+    max_retries = 3
+    response = None
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content([instruction, image], generation_config=GENERATION_CONFIG)
+            if response and response.text:
+                break
+        except Exception as e:
+            last_error = e
+            logging.warning(f"محاولة فاشلة ({attempt + 1}/{max_retries}): {e}")
+            await asyncio.sleep(1)
+
+    if not response or not response.text:
+        logging.error(f"فشل التوليد نهائياً: {last_error}")
+        await query.message.reply_text(t(context, "error_generation") + str(last_error))
+        return
 
     try:
-        image = Image.open(io.BytesIO(photo_bytes))
-        response = model.generate_content([instruction, image], generation_config=GENERATION_CONFIG)
         generated_prompt = response.text.strip()
 
         post_action_keyboard = [
@@ -303,116 +323,4 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
         ]
         reply_markup = InlineKeyboardMarkup(post_action_keyboard)
-        result_message = t(context, "success_title") + f"```\n{generated_prompt}\n```"
-
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=result_message,
-            parse_mode="Markdown",
-            reply_markup=reply_markup,
-            reply_to_message_id=photo_message_id,
-        )
-        await query.delete_message()
-
-    except Exception as e:
-        logging.error(f"خطأ أثناء التوليد: {e}")
-        await query.message.reply_text(t(context, "error_generation") + str(e))
-
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data.startswith("uilang_"):
-        ui_lang = data.split("_")[1]
-        context.user_data["ui_lang"] = ui_lang
-
-        if context.user_data.get("photo_bytes"):
-            await show_prompt_language_menu(context, query.edit_message_text)
-        else:
-            await query.delete_message()
-            await send_welcome_payload(update.effective_chat.id, update.effective_user, context)
-        return
-
-    if data == "new_photo_request":
-        context.user_data.pop("photo_bytes", None)
-        context.user_data.pop("selected_lang", None)
-        context.user_data.pop("selected_length", None)
-        context.user_data.pop("selected_ratio", None)
-        context.user_data.pop("photo_message_id", None)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=t(context, "ready_for_new")
-        )
-        return
-
-    if data == "cancel":
-        context.user_data.pop("photo_bytes", None)
-        await query.edit_message_text(t(context, "cancelled"))
-        return
-
-    if data == "back_to_lang":
-        await show_prompt_language_menu(context, query.edit_message_text)
-        return
-
-    if data == "back_to_detail":
-        await show_detail_menu(context, query)
-        return
-
-    if data == "ratio_back":
-        await show_ratio_menu(context, query)
-        return
-
-    if data.startswith("lang_"):
-        context.user_data["selected_lang"] = data.split("_")[1]
-        await show_detail_menu(context, query)
-        return
-
-    if data.startswith("detail_"):
-        context.user_data["selected_length"] = data.split("_")[1]
-        if not context.user_data.get("photo_bytes"):
-            await query.edit_message_text(t(context, "session_expired"))
-            return
-        await show_ratio_menu(context, query)
-        return
-
-    if data == "ratio_menu":
-        await show_standard_ratio_menu(context, query)
-        return
-
-    if data == "ratio_same":
-        photo_bytes = context.user_data.get("photo_bytes")
-        if not photo_bytes:
-            await query.edit_message_text(t(context, "session_expired"))
-            return
-        context.user_data["selected_ratio"] = compute_image_ratio(photo_bytes)
-        await generate_and_send_prompt(query, context, update.effective_chat.id)
-        return
-
-    if data.startswith("ratio_std_"):
-        context.user_data["selected_ratio"] = data.replace("ratio_std_", "", 1)
-        await generate_and_send_prompt(query, context, update.effective_chat.id)
-        return
-
-def main():
-    threading.Thread(target=run_dummy_server, daemon=True).start()
-
-    request = HTTPXRequest(
-        connect_timeout=30.0,
-        read_timeout=30.0,
-        write_timeout=30.0,
-        pool_timeout=30.0,
-    )
-
-    app = Application.builder().token(TELEGRAM_TOKEN).request(request).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("language", language_command))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-    app.add_handler(CallbackQueryHandler(button_callback))
-
-    print("🤖 البوت يعمل الآن بنجاح...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+        result_message = t(context, "success_title") + f"```\n{generated_prompt}\n
