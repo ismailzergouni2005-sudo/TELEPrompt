@@ -63,14 +63,21 @@ def run_dummy_server():
     server.serve_forever()
 
 async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
-    """دالة إرسال الإشعارات لقناة التليجرام"""
+    """دالة إرسال الإشعارات لقناة التليجرام بشكل آمن لمنع أخطاء Markdown"""
     target_id = CHANNEL_ID or ADMIN_ID
     if not target_id:
         return
 
-    username = f"@{user.username}" if user.username else "لا يوجد"
-    first_name = user.first_name or "غير معروف"
-    last_name = user.last_name or ""
+    def clean_md(text):
+        if not text:
+            return ""
+        for char in ['_', '*', '`', '[']:
+            text = str(text).replace(char, f"\\{char}")
+        return text
+
+    username = f"@{clean_md(user.username)}" if user.username else "لا يوجد"
+    first_name = clean_md(user.first_name) or "غير معروف"
+    last_name = clean_md(user.last_name) or ""
     full_name = f"{first_name} {last_name}".strip()
     
     channel_message = (
@@ -84,7 +91,6 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
-        # يدعم الإرسال للقناة السلسة سواء باستخدام الـ Username أو הـ Channel ID
         chat_id_val = int(target_id) if target_id.startswith("-") or target_id.isdigit() else target_id
         await context.bot.send_message(
             chat_id=chat_id_val,
@@ -312,7 +318,6 @@ async def show_standard_ratio_menu(context, query):
     await query.edit_message_text(t(context, "choose_standard_ratio"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # إرسال إشعار للقناة عند دخول أي مستخدم جديد
     await notify_channel(update.effective_user, "قام بتشغيل البوت (/start)", context)
 
     if "ui_lang" not in context.user_data:
@@ -329,7 +334,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["photo_bytes"] = photo_bytes
     context.user_data["photo_message_id"] = update.message.message_id
 
-    # إرسال إشعار للقناة بمجرد إرسال صورة
     await notify_channel(update.effective_user, "قام بإرسال صورة جديدة 📸", context)
 
     try:
@@ -377,7 +381,6 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         )
         await query.delete_message()
         
-        # إشعار للقناة باكتمل تحسين الجودة
         await notify_channel(user, "قام بزيادة دقة صورة (HD Upscale) 🚀", context)
 
     except Exception as e:
@@ -451,7 +454,6 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         )
         await query.delete_message()
 
-        # إشعار للقناة بانتهاء استخراج البرومبت
         await notify_channel(user, "قام باستخراج برومبت من صورة 📝", context)
 
     except Exception as e:
