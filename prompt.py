@@ -18,7 +18,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# مفاتيح التشغيل
+# مفاتيح التشغيل (استبدلها بمفاتيحك أو استدعيها من متغيرات البيئة)
 TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
 
@@ -30,11 +30,11 @@ model = genai.GenerativeModel("gemini-2.5-flash")
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "👋 **أهلاً بك في بوت استخراج البرومبت الاحترافي!**\n\n"
-        "أرسل لي أي صورة، وسأقوم باستخراج البرومبت الخاص بها مباشرة وبطريقة مجهزة للنسخ الفوري."
+        "أرسل لي أي صورة الآن، وسأقوم بتحليلها واستخراج برومبت دقيق جداً ومفصل يمكنك نسخه بضغطة واحدة."
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
-# استقبال الصورة وعرض الخطوة الأولى (اختيار اللغة)
+# استقبال الصورة وعرض قائمة اختيار اللغة أولاً
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
@@ -43,11 +43,11 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await show_language_menu(update.message.reply_text)
 
-# عرض قائمة اختيار اللغة
+# عرض قائمة اختيار اللغة مع أعلام الجزائر وإنجلترا
 async def show_language_menu(send_func):
     keyboard = [
         [
-            InlineKeyboardButton("🇸🇦 اللغة العربية", callback_data="lang_ar"),
+            InlineKeyboardButton("🇩🇿 العربية", callback_data="lang_ar"),
             InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
         ],
         [
@@ -65,7 +65,7 @@ async def show_detail_menu(query):
             InlineKeyboardButton("⚖️ متوسط", callback_data="detail_medium"),
         ],
         [
-            InlineKeyboardButton("🔍 تفصيلي وطويل جداً", callback_data="detail_detailed"),
+            InlineKeyboardButton("🔍 تفصيلي وفائق الدقة (شامل جداً)", callback_data="detail_detailed"),
         ],
         [
             InlineKeyboardButton("🔙 رجوع للغة", callback_data="back_to_lang"),
@@ -109,23 +109,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة من جديد.")
             return
 
-        await query.edit_message_text("⏳ جاري تحليل الصورة واستخراج البرومبت الموسّع...")
+        await query.edit_message_text("⏳ جاري تحليل عناصر الصورة واستخراج البرومبت بدقة فائقة...")
 
-        # تعليمات مخصصة لإنتاج برومبت أطول وأكثر تفصيلاً
+        # توجيهات صارمة ومفصلة لضمان أقصى درجة من الدقة دون مقدمات
         system_instructions = {
-            ("ar", "short"): "اكتب برومبت قصير وموجز باللغة العربية يصف الأجزاء الرئيسية لهذه الصورة لتوليد صورة مماثلة. أرجع نص البرومبت فقط بدون أية مقدمات.",
-            ("ar", "medium"): "اكتب برومبت متوسط التفاصيل باللغة العربية يصف موضوع الصورة والنمط والألوان والإضاءة. أرجع نص البرومبت فقط بدون أية مقدمات.",
+            ("ar", "short"): "اكتب برومبت قصير وموجز باللغة العربية يصف الفكرة الرئيسية لهذه الصورة. أرجع نص البرومبت فقط بدون أي مقدمات.",
+            ("ar", "medium"): "اكتب برومبت متوسط التفاصيل باللغة العربية يصف موضوع الصورة والنمط والألوان والإضاءة. أرجع نص البرومبت فقط بدون أي مقدمات.",
             ("ar", "detailed"): (
-                "قم بكتابة برومبت طويل جداً وتفصيلي للغاية باللغة العربية لإعادة توليد هذه الصورة بالذكاء الاصطناعي. "
-                "اشرح كافة الأركان: العناصر المركزية والخلفية، دقة وتفاصيل الإضاءة والظلال، التكوين والزاوية، نوع الكاميرا والعدسة، الألوان والدرجات، والأسلوب الفني أو محرك العرض. "
-                "أرجع نص البرومبت فقط دون أية مقدمات أو شروحات."
+                "قم بتحليل هذه الصورة بدقة متناهية واكتب برومبت شديد التفصيل والدقة باللغة العربية لإعادة إنتاجها عبر الذكاء الاصطناعي. "
+                "يجب أن يتضمن البرومبت: Subject Details (وصف الدقيق للعناصر والشخصيات)، Art Style/Rendering Engine (نوع الفن أو المحرك)، "
+                "Lighting & Atmosphere (نوع الإضاءة، والظلال، وعمق الجو)، Camera & Composition (زاوية الكاميرا، والعدسة، والتأطير)، "
+                "و Colors & Textures (الألوان والملمس وخامة السطوح). "
+                "أرجع نص البرومبت فقط الصافي المخصص للنسخ المباشر بدون أية مقدمات أو عناوين فرعية أو شروحات جانبية."
             ),
             ("en", "short"): "Write a concise image generation prompt in English to recreate this photo. Output ONLY the raw prompt text.",
             ("en", "medium"): "Write a medium-detailed image generation prompt in English describing style, lighting, composition, and colors. Output ONLY the raw prompt text.",
             ("en", "detailed"): (
-                "Write an extremely long, highly detailed, comprehensive image generation prompt in English to recreate this image perfectly. "
-                "Cover every single detail: subject descriptions, background elements, art style or rendering engine (e.g., Unreal Engine 5, Octane Render), camera lens and shot angle, lighting direction and volumetric atmosphere, color palette, textures, and quality tags (e.g., 8k, cinematic, ultra-realistic). "
-                "Output ONLY the raw prompt text without any intro, labels, or extra comments."
+                "Analyze this image comprehensively and write an extremely detailed, hyper-accurate image generation prompt in English. "
+                "The prompt must precisely describe: subject features, clothing/textures, posture, exact background elements, art style or rendering engine (e.g. Unreal Engine 5, Octane Render, 8k photographic), camera shot (angle, lens type, focal length, depth of field), precise lighting (cinematic, volumetric, rim light), and color palette. "
+                "Output ONLY the pure raw prompt text suitable for direct copy-pasting. Do NOT include any intro, markdown headings, or explanations."
             ),
         }
 
@@ -136,7 +138,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response = model.generate_content([instruction, image])
             generated_prompt = response.text.strip()
 
-            # إعداد أزرار التحكم بعد النتيجة
+            # خيارات التحكم بعد ظهور النتيجة
             post_action_keyboard = [
                 [
                     InlineKeyboardButton("🔄 استخراج بمستوى/لغة أخرى", callback_data="back_to_lang"),
