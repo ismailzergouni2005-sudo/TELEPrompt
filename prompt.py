@@ -1,3 +1,4 @@
+import os
 import io
 import logging
 from google import generativeai as genai
@@ -18,10 +19,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# مفاتيح التشغيل (استبدلها بمفاتيحك أو استدعيها من متغيرات البيئة)
-import os
-
-# قراءة المفاتيح من متغيرات البيئة بدلاً من كتابتها نصياً
+# قراءة المفاتيح من Render، وفي حال عدم وجودها يتم استخدام المفاتيح المباشرة
+# قراءة المفاتيح آمنة عبر متغيرات البيئة فقط
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
