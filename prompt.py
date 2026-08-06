@@ -5,7 +5,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
 from PIL import Image
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -55,8 +55,12 @@ def run_dummy_server():
 TEXTS = {
     "ar": {
         "welcome": (
-            "👋 **أهلاً بك في بوت استخراج البرومبت الاحترافي!**\n\n"
-            "أرسل لي أي صورة الآن، وسأقوم بتحليلها واستخراج برومبت دقيق جداً ومفصل يمكنك نسخه بضغطة واحدة."
+            "✨ **بوت استخراج البرومبت الاحترافي** ✨\n"
+            "━━━━━━━━━━━━━━━━━━━\n\n"
+            "🖼️ أرسل أي صورة تريدها، وسأقوم بتحليل كل تفاصيلها بدقة عالية.\n\n"
+            "🎯 اختر لغة البرومبت ومستوى التفصيل الذي يناسبك.\n"
+            "📋 وستحصل على برومبت احترافي جاهز للنسخ بضغطة واحدة!\n\n"
+            "👇 ابدأ الآن بإرسال صورتك"
         ),
         "choose_prompt_lang": "🌐 **الخطوة 1/2:** اختر لغة البرومبت المطلوب:",
         "choose_detail": "⚙️ **الخطوة 2/2:** اختر مستوى تفصيل البرومبت:",
@@ -75,8 +79,12 @@ TEXTS = {
     },
     "en": {
         "welcome": (
-            "👋 **Welcome to the Professional Prompt Extractor Bot!**\n\n"
-            "Send me any image now, and I'll analyze it to extract a highly accurate, detailed prompt you can copy with one tap."
+            "✨ **Professional Prompt Extractor Bot** ✨\n"
+            "━━━━━━━━━━━━━━━━━━━\n\n"
+            "🖼️ Send me any image, and I'll analyze every detail with high precision.\n\n"
+            "🎯 Choose your preferred prompt language and detail level.\n"
+            "📋 You'll get a professional, ready-to-copy prompt in one tap!\n\n"
+            "👇 Start now by sending your image"
         ),
         "choose_prompt_lang": "🌐 **Step 1/2:** Choose the language of the prompt:",
         "choose_detail": "⚙️ **Step 2/2:** Choose the detail level of the prompt:",
@@ -171,6 +179,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     context.user_data["photo_bytes"] = photo_bytes
+    # نخزن رقم رسالة الصورة حتى نستطيع الرد عليها لاحقاً بالبرومبت الناتج
+    context.user_data["photo_message_id"] = update.message.message_id
+
+    # تفاعل بقلب على رسالة الصورة مباشرة عند استلامها
+    try:
+        await context.bot.set_message_reaction(
+            chat_id=update.effective_chat.id,
+            message_id=update.message.message_id,
+            reaction=[ReactionTypeEmoji(emoji="❤")],
+        )
+    except Exception as e:
+        logging.warning(f"تعذر إضافة التفاعل على الرسالة: {e}")
 
     if "ui_lang" not in context.user_data:
         # لم يتم اختيار لغة الواجهة بعد، نطلبها أولاً ثم نكمل تلقائياً
@@ -204,6 +224,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "cancel":
         context.user_data.pop("photo_bytes", None)
         context.user_data.pop("selected_lang", None)
+        context.user_data.pop("photo_message_id", None)
         await query.edit_message_text(t(context, "cancelled"))
         return
 
@@ -224,6 +245,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         selected_length = data.split("_")[1]
         selected_lang = context.user_data.get("selected_lang", "en")
         photo_bytes = context.user_data.get("photo_bytes")
+        photo_message_id = context.user_data.get("photo_message_id")
 
         if not photo_bytes:
             await query.edit_message_text(t(context, "session_expired"))
@@ -297,9 +319,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             reply_markup = InlineKeyboardMarkup(post_action_keyboard)
 
+            # نستخدم ``` لجعل النص داخل صندوق كود قابل للنسخ بضغطة واحدة في تيليجرام
             result_message = t(context, "success_title") + f"```\n{generated_prompt}\n```"
 
-            await query.message.reply_text(result_message, parse_mode="Markdown", reply_markup=reply_markup)
+            # إرسال البرومبت كرد مباشر على رسالة الصورة الأصلية
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=result_message,
+                parse_mode="Markdown",
+                reply_markup=reply_markup,
+                reply_to_message_id=photo_message_id,
+            )
             await query.delete_message()
 
         except Exception as e:
