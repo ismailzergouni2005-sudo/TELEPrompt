@@ -459,24 +459,51 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
     )
 
     system_instructions = {
-        ("ar", "short"): f"اكتب برومبت قصير وموجز (25-40 كلمة تقريباً) باللغة العربية لوصف هذه الصورة لاستخدامه في الذكاء الاصطناعي. {output_rules_ar}",
-        ("ar", "medium"): f"اكتب برومبت متوسط الطول وشامل (60-100 كلمة تقريباً) باللغة العربية لوصف هذه الصورة لاستخدامه في توليد الصور، مع ذكر الموضوع الرئيسي والإضاءة والأسلوب العام. {output_rules_ar}",
-        ("ar", "detailed"): (
-            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، ثم حوّل هذا التحليل إلى برومبت واحد "
-            "تفصيلي جداً باللغة العربية لا يقل عن 150-200 كلمة، بحيث يغطي ضمن نفس الفقرة: الموضوع الرئيسي وتفاصيله الدقيقة، "
-            "نوع اللقطة وزاوية الكاميرا، الإضاءة ومصدرها ولونها، الألوان السائدة والتباين، "
-            "الملمس والتفاصيل الدقيقة، الخلفية والعناصر المحيطة، الجو العام والمزاج، "
-            "والأسلوب الفني أو نوع التصوير (سينمائي، واقعي، لوحة رقمية...الخ). "
+        ("ar", "short"): (
+            "اكتب برومبت قصير باللغة العربية لا يقل عن 70 كلمة ولا يزيد عن 80 كلمة لوصف هذه الصورة "
+            "لاستخدامه في الذكاء الاصطناعي، بحيث يذكر الموضوع الرئيسي وأهم تفاصيله الظاهرة، والإضاءة، "
+            "والألوان العامة، والأسلوب البصري، بأسلوب مكثف لكنه غني بالتفاصيل المهمة وليس مجرد جملة عابرة. "
             f"{output_rules_ar}"
         ),
-        ("en", "short"): f"Write a short and concise image generation prompt (about 25-40 words) describing this image. {output_rules_en}",
-        ("en", "medium"): f"Write a medium-length, well-rounded image generation prompt (about 60-100 words) describing this image, covering the main subject, lighting, and overall style. {output_rules_en}",
+        ("ar", "medium"): (
+            "اكتب برومبت متوسط الطول باللغة العربية لا يقل عن 80 كلمة ولا يزيد عن 120 كلمة لوصف هذه الصورة "
+            "لاستخدامه في توليد الصور، بحيث يغطي الموضوع الرئيسي وتفاصيله، نوع اللقطة والزاوية تقريباً، "
+            "الإضاءة ومصدرها، الألوان السائدة، الخلفية، والأسلوب الفني العام. "
+            f"{output_rules_ar}"
+        ),
+        ("ar", "detailed"): (
+            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، ثم حوّل هذا التحليل إلى برومبت واحد "
+            "تفصيلي جداً باللغة العربية لا يقل عن 220 كلمة (ويفضل أن يتجاوزها)، بحيث يشرح بدقة متناهية ضمن "
+            "نفس الفقرة: الموضوع الرئيسي وكل تفاصيله الدقيقة (الملابس، تعابير الوجه أو الشكل، الوضعية، "
+            "الحركة)، نوع اللقطة وزاوية الكاميرا وبعد العدسة، مصدر الإضاءة واتجاهها ولونها وشدتها والظلال "
+            "الناتجة عنها، الألوان السائدة ودرجاتها والتباين بينها، الملمس الدقيق للأسطح والمواد (قماش، "
+            "جلد، فراء، معدن...)، الخلفية وكل العناصر المحيطة وعمق المجال، الجو العام والمزاج والقصة "
+            "الضمنية التي توحي بها الصورة، وأخيراً الأسلوب الفني أو نوع التصوير (سينمائي، واقعي، لوحة "
+            "رقمية، خيال علمي...الخ). اشرح كل عنصر من هذه العناصر بجملة أو أكثر ولا تكتفِ بذكره فقط. "
+            f"{output_rules_ar}"
+        ),
+        ("en", "short"): (
+            "Write a short image generation prompt of at least 70 words and no more than 80 words "
+            "describing this image, mentioning the main subject and its key visible details, the lighting, "
+            "the overall colors, and the visual style — dense but rich in meaningful detail, not just a "
+            f"single passing sentence. {output_rules_en}"
+        ),
+        ("en", "medium"): (
+            "Write a medium-length image generation prompt of at least 80 words and no more than 120 words "
+            "describing this image, covering the main subject and its details, roughly the shot type and "
+            f"angle, the lighting and its source, dominant colors, background, and overall artistic style. {output_rules_en}"
+        ),
         ("en", "detailed"): (
             "Analyze this image with maximum depth and precision, then turn that analysis into a single "
-            "ultra-detailed image generation prompt of at least 150-200 words, covering within the same "
-            "paragraph: the main subject and its fine details, shot type and camera angle, lighting source "
-            "and color, dominant colors and contrast, textures and fine details, background and surrounding "
-            "elements, overall mood and atmosphere, and the artistic or cinematographic style. "
+            "ultra-detailed image generation prompt of at least 220 words (preferably more), explaining "
+            "with extreme precision within the same paragraph: the main subject and every fine detail "
+            "(clothing, expression or shape, pose, motion), the shot type, camera angle and lens focal "
+            "length, the lighting source, direction, color, intensity and the shadows it creates, the "
+            "dominant colors, their shades and the contrast between them, the fine texture of surfaces and "
+            "materials (fabric, leather, fur, metal...), the background and every surrounding element and "
+            "depth of field, the overall mood and atmosphere and the implicit story the image suggests, and "
+            "finally the artistic or cinematographic style (cinematic, photorealistic, digital painting, "
+            "sci-fi, etc). Explain each of these elements in a sentence or more, don't just name it. "
             f"{output_rules_en}"
         ),
     }
