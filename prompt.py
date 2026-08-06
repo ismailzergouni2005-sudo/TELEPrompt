@@ -2,9 +2,11 @@ import os
 import io
 import re
 import math
+import time
 import logging
 import threading
 import asyncio
+import urllib.request
 import numpy as np
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
@@ -28,6 +30,12 @@ logging.basicConfig(
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
+
+# رابط الخدمة نفسها لاستخدامه في الـ self-ping (Render يضبط RENDER_EXTERNAL_URL
+# تلقائياً؛ ويمكن أيضاً ضبط SELF_URL يدوياً كخيار احتياطي)
+SELF_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("SELF_URL", "")
+# كل كم ثانية يتم عمل ping ذاتي (افتراضياً كل 10 دقائق، أقل من مهلة نوم Render وهي 15 دقيقة)
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
 
 # قراءة مفاتيح API من بيئة Render بأمان (تفصل بين المفاتيح الفاصلة ",")
 raw_keys = os.getenv("API_KEYS", "")
@@ -80,6 +88,28 @@ def start_health_server():
         server.serve_forever()
     except Exception as e:
         logging.error(f"❌ فشل تشغيل خادم فحص الصحة على البورت {port}: {e}")
+
+def keep_alive_ping():
+    """يرسل طلب HTTP دوري لرابط الخدمة نفسها (self-ping) كل KEEP_ALIVE_INTERVAL
+    ثانية، لمنع Render (في الخطة المجانية) من تعليق الخدمة (Sleep) بسبب الخمول —
+    بدون الحاجة للاعتماد فقط على خدمة خارجية مثل UptimeRobot."""
+    if not SELF_URL:
+        logging.warning(
+            "⚠️ لم يتم العثور على رابط الخدمة (RENDER_EXTERNAL_URL/SELF_URL)؛ "
+            "تم تعطيل خاصية إبقاء الخدمة نشطة ذاتياً (self-ping)."
+        )
+        return
+
+    ping_url = SELF_URL.rstrip("/") + "/"
+    logging.info(f"🔁 تفعيل self-ping كل {KEEP_ALIVE_INTERVAL} ثانية على: {ping_url}")
+
+    while True:
+        time.sleep(KEEP_ALIVE_INTERVAL)
+        try:
+            with urllib.request.urlopen(ping_url, timeout=15) as response:
+                logging.info(f"✅ Self-ping ناجح ({response.status}) إلى {ping_url}")
+        except Exception as e:
+            logging.warning(f"⚠️ فشل self-ping إلى {ping_url}: {e}")
 
 async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     target_id = CHANNEL_ID or ADMIN_ID
@@ -702,11 +732,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await generate_and_send_prompt(query, context, update.effective_chat.id, update.effective_user)
         return
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """معالج أخطاء عام: يسجل أي استثناء يحدث داخل معالجة رسالة أو زر، بدل أن
+    يتسبب في توقف البوت بالكامل (وهو ما يجعل خدمة Render/UptimeRobot تظهر Down)."""
+    logging.error("حدث استثناء غير متوقع أثناء معالجة تحديث:", exc_info=context.error)
+
 def main():
+    if not TELEGRAM_TOKEN:
+        logging.error("❌ لم يتم تعيين TELEGRAM_TOKEN في متغيرات البيئة! لن يعمل البوت.")
     if not API_KEYS:
         logging.warning("⚠️ لم يتم العثور على أي مفتاح في متغير API_KEYS!")
 
     threading.Thread(target=start_health_server, daemon=True).start()
+    threading.Thread(target=keep_alive_ping, daemon=True).start()
 
     request = HTTPXRequest(
         connect_timeout=30.0,
@@ -721,9 +759,29 @@ def main():
     app.add_handler(CommandHandler("language", language_command))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(button_callback))
+    app.add_error_handler(error_handler)
 
     print("🤖 البوت يعمل بنجاح مع تدوير المفاتيح التلقائي...")
-    app.run_polling()
+
+    # حلقة تشغيل مستمرة: أي عطل غير متوقع (انقطاع شبكة، خطأ داخلي، إلخ) لا يوقف
+    # العملية بالكامل، بل يُعاد تشغيل البوت تلقائياً بعد مهلة قصيرة، حتى تبقى
+    # خدمة Render (وخادم فحص الصحة معها) شغّالة طول الوقت بدون تدخل يدوي.
+    retry_delay = 5
+    while True:
+        try:
+            app.run_polling(drop_pending_updates=True, close_loop=False)
+            # إذا خرج run_polling بشكل طبيعي (إيقاف يدوي نظيف) لا داعي لإعادة التشغيل
+            break
+        except (KeyboardInterrupt, SystemExit):
+            logging.info("🛑 تم إيقاف البوت يدوياً.")
+            break
+        except Exception as e:
+            logging.error(
+                f"❌ توقف البوت بسبب خطأ غير متوقع، سيُعاد التشغيل خلال {retry_delay} ثانية: {e}",
+                exc_info=True,
+            )
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 60)
 
 if __name__ == "__main__":
     main()
