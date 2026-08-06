@@ -119,8 +119,8 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"تعذر إرسال الإشعار للقناة: {e}")
 
 def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
-    """رفع دقة الصورة محلياً بقوة مضاعفة: تكبير عالي الجودة + إزالة ضوضاء أقوى +
-    تحسين تفاصيل (detail enhancement) + تباين تكيفي (CLAHE) + حدة إضافية عبر Unsharp Mask."""
+    """رفع دقة الصورة محلياً: تكبير حقيقي عالي الجودة + تنظيف خفيف للضوضاء +
+    حدة معتدلة تحافظ على الملامح الأصلية للوجه والتفاصيل دون تشويهها."""
     image_np = np.frombuffer(photo_bytes, np.uint8)
     img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
@@ -130,28 +130,26 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
         img, (width * scale_factor, height * scale_factor), interpolation=cv2.INTER_LANCZOS4
     )
 
-    # إزالة الضوضاء بقوة أكبر مع الحفاظ على التفاصيل الدقيقة
-    denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 5, 5, 7, 21)
+    # إزالة ضوضاء خفيفة فقط (قيمة منخفضة) حتى لا تُفقد التفاصيل الدقيقة للوجه
+    denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 3, 3, 7, 21)
 
-    # إبراز التفاصيل والملامس الدقيقة محلياً
-    detail_enhanced = cv2.detailEnhance(denoised, sigma_s=12, sigma_r=0.2)
-
-    # تباين تكيفي (CLAHE) على قناة الإضاءة فقط للحفاظ على الألوان الطبيعية
-    lab = cv2.cvtColor(detail_enhanced, cv2.COLOR_BGR2LAB)
+    # تباين تكيفي لطيف جداً على قناة الإضاءة فقط، ممزوج جزئياً مع الأصل لتفادي أي مبالغة
+    lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-    l_channel = clahe.apply(l_channel)
-    lab_merged = cv2.merge((l_channel, a_channel, b_channel))
+    clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(8, 8))
+    l_clahe = clahe.apply(l_channel)
+    l_blended = cv2.addWeighted(l_channel, 0.6, l_clahe, 0.4, 0)
+    lab_merged = cv2.merge((l_blended, a_channel, b_channel))
     contrast_boosted = cv2.cvtColor(lab_merged, cv2.COLOR_LAB2BGR)
 
-    # حدة إضافية قوية عبر Unsharp Masking لإبراز الحواف الدقيقة
-    gaussian = cv2.GaussianBlur(contrast_boosted, (0, 0), sigmaX=3)
-    sharpened = cv2.addWeighted(contrast_boosted, 1.8, gaussian, -0.8, 0)
+    # حدة معتدلة عبر Unsharp Masking لإبراز الحواف دون خلق هالات أو مظهر مصطنع
+    gaussian = cv2.GaussianBlur(contrast_boosted, (0, 0), sigmaX=2)
+    sharpened = cv2.addWeighted(contrast_boosted, 1.25, gaussian, -0.25, 0)
 
     pil_img = Image.fromarray(cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB))
-    pil_img = ImageEnhance.Sharpness(pil_img).enhance(2.2)
-    pil_img = ImageEnhance.Contrast(pil_img).enhance(1.15)
-    pil_img = ImageEnhance.Color(pil_img).enhance(1.08)
+    pil_img = ImageEnhance.Sharpness(pil_img).enhance(1.25)
+    pil_img = ImageEnhance.Contrast(pil_img).enhance(1.05)
+    pil_img = ImageEnhance.Color(pil_img).enhance(1.02)
 
     output_stream = io.BytesIO()
     pil_img.save(output_stream, format="JPEG", quality=98)
