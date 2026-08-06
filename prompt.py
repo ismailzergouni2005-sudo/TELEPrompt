@@ -23,23 +23,25 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# قراءة المفاتيح آمنة عبر متغيرات البيئة فقط
+# قراءة المفاتيح آمنة عبر متغيرات البيئة
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ADMIN_ID = os.getenv("ADMIN_ID")  # معرف تيليجرام الخاص بالأدمن لاستقبال إشعارات المستخدمين
+ADMIN_ID = os.getenv("ADMIN_ID")
+
+# روابط الصورة والملصق الترحيبي (يمكنك تعديل الروابط أو المعرفات حسب رغبتك)
+WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9"  # ضع رابط صورة الترحيب الخاصة بك
+WELCOME_STICKER_ID = "AAMCAgADGQEAAS02smpyIKxv8rKEo21r6k8nMIpR59KKAAJUAANBtVYMarf4xwiNAfoBAAdtAAM9BA"          # ضع Sticker File ID الخاص بك هنا
 
 # إعداد نموذج Gemini
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-3.6-flash")
 
-# إعداد توليد أطول وأكثر تفصيلاً (رفع الحد الأقصى للمخرجات حتى لا يُقتصّ البرومبت التفصيلي)
 GENERATION_CONFIG = {
     "max_output_tokens": 4096,
     "temperature": 0.9,
     "top_p": 0.95,
 }
 
-# نسب الأبعاد القياسية المتاحة في قائمة "المقاس العام"
 STANDARD_RATIOS = [
     ("1:1", "1:1  (مربع / Square)"),
     ("16:9", "16:9  (عريض / Widescreen)"),
@@ -49,39 +51,46 @@ STANDARD_RATIOS = [
     ("21:9", "21:9  (سينمائي / Cinematic)"),
 ]
 
-
-# ==========================================================
-# خادم HTTP وهمي لإرضاء فحص المنفذ في Render (Web Service)
-# ==========================================================
 def run_dummy_server():
     port = int(os.getenv("PORT", 10000))
-
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"Bot is running")
-
         def log_message(self, format, *args):
-            pass  # لإسكات سجلات الخادم الوهمي
-
+            pass
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
+# دالة توليد نص الترحيب الشامل الذي يوضح عمل البوت ويضمن اسم المستخدم باللون الأزرق
+def get_welcome_text(user, ui_lang="ar"):
+    # رابط tg://user يجعل اسم المستخدم يتنسق باللون الأزرق التفاعلي
+    user_mention = f"[{user.first_name}](tg://user?id={user.id})"
+    
+    if ui_lang == "ar":
+        return (
+            f"✨ أهلاً بك يا {user_mention} في **بوت استخراج البرومبت الاحترافي**! ✨\n"
+            "━━━━━━━━━━━━━━━━━━━\n\n"
+            "🛠️ **كيف يعمل هذا البوت؟**\n"
+            "1️⃣ **أرسل أي صورة:** سيتعرف البوت عليها ويقوم بتحليلها باستخدام الذكاء الاصطناعي.\n"
+            "2️⃣ **حدد الخيارات:** اختر لغة البرومبت (عربي/إنجليزي)، ومستوى التفصيل، ونسبة أبعاد الصورة.\n"
+            "3️⃣ **انسخ البرومبت:** يُنشئ البوت وصفاً دقيقاً للغاية جاهزاً للنسخ بضغطة واحدة لاستخدامه في مولدات الصور (مثل Midjourney و Stable Diffusion).\n\n"
+            "👇 **ابدأ الآن بإرسال صورتك!**"
+        )
+    else:
+        return (
+            f"✨ Welcome {user_mention} to the **Professional Prompt Extractor Bot**! ✨\n"
+            "━━━━━━━━━━━━━━━━━━━\n\n"
+            "🛠️ **How does this bot work?**\n"
+            "1️⃣ **Send an Image:** The bot will analyze every detail using AI.\n"
+            "2️⃣ **Select Options:** Choose prompt language, detail level, and aspect ratio.\n"
+            "3️⃣ **Copy Prompt:** You get a hyper-precise prompt ready to copy in one tap for AI generators!\n\n"
+            "👇 **Start now by sending your image!**"
+        )
 
-# ==========================================================
-# نصوص واجهة البوت بلغتين (عربي / إنجليزي)
-# ==========================================================
 TEXTS = {
     "ar": {
-        "welcome": (
-            "✨ **بوت استخراج البرومبت الاحترافي** ✨\n"
-            "━━━━━━━━━━━━━━━━━━━\n\n"
-            "🖼️ أرسل أي صورة تريدها، وسأقوم بتحليل كل تفاصيلها بدقة عالية.\n\n"
-            "🎯 اختر لغة البرومبت ومستوى التفصيل ونسبة الأبعاد التي تناسبك.\n"
-            "📋 وستحصل على برومبت احترافي جاهز للنسخ بضغطة واحدة!\n\n"
-            "👇 ابدأ الآن بإرسال صورتك"
-        ),
         "choose_prompt_lang": "🌐 **الخطوة 1/3:** اختر لغة البرومبت المطلوب:",
         "choose_detail": "⚙️ **الخطوة 2/3:** اختر مستوى تفصيل البرومبت:",
         "choose_ratio": "📐 **الخطوة 3/3:** اختر مقاس/نسبة أبعاد الصورة:",
@@ -103,14 +112,6 @@ TEXTS = {
         "error_generation": "❌ حدث خطأ أثناء تحليل الصورة: ",
     },
     "en": {
-        "welcome": (
-            "✨ **Professional Prompt Extractor Bot** ✨\n"
-            "━━━━━━━━━━━━━━━━━━━\n\n"
-            "🖼️ Send me any image, and I'll analyze every detail with high precision.\n\n"
-            "🎯 Choose your preferred prompt language, detail level, and aspect ratio.\n"
-            "📋 You'll get a professional, ready-to-copy prompt in one tap!\n\n"
-            "👇 Start now by sending your image"
-        ),
         "choose_prompt_lang": "🌐 **Step 1/3:** Choose the language of the prompt:",
         "choose_detail": "⚙️ **Step 2/3:** Choose the detail level of the prompt:",
         "choose_ratio": "📐 **Step 3/3:** Choose the image size / aspect ratio:",
@@ -133,18 +134,11 @@ TEXTS = {
     },
 }
 
-
 def t(context: ContextTypes.DEFAULT_TYPE, key: str) -> str:
-    """إرجاع النص المناسب حسب لغة واجهة المستخدم المخزنة."""
     ui_lang = context.user_data.get("ui_lang", "ar")
     return TEXTS[ui_lang][key]
 
-
-# ==========================================================
-# أدوات مساعدة لنسبة الأبعاد
-# ==========================================================
 def compute_image_ratio(photo_bytes) -> str:
-    """حساب نسبة أبعاد الصورة الأصلية المرسلة (مثال: 4:3)."""
     try:
         image = Image.open(io.BytesIO(photo_bytes))
         width, height = image.size
@@ -155,10 +149,38 @@ def compute_image_ratio(photo_bytes) -> str:
         logging.warning(f"تعذر حساب نسبة أبعاد الصورة: {e}")
         return "غير محدد / Unspecified"
 
+# ==========================================================
+# الواجهات والرسائل
+# ==========================================================
+async def send_welcome_payload(chat_id, user, context):
+    """إرسال صورة الترحيب + الرسالة + الملصق"""
+    ui_lang = context.user_data.get("ui_lang", "ar")
+    welcome_msg = get_welcome_text(user, ui_lang)
+    
+    # 1. إرسال صورة الترحيب مع نص الشرح والمنشن الأزرق
+    try:
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=WELCOME_IMAGE_URL,
+            caption=welcome_msg,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        # في حال عدم وجود صورة يرسل النص كرسالة عادية
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=welcome_msg,
+            parse_mode="Markdown"
+        )
+        logging.warning(f"تعذر إرسال صورة الترحيب: {e}")
 
-# ==========================================================
-# قوائم لوحات المفاتيح (Keyboards)
-# ==========================================================
+    # 2. إرسال الملصق بعد الرسالة فوراً
+    try:
+        if WELCOME_STICKER_ID and not WELCOME_STICKER_ID.startswith("CAACAgIAAxkBAAE..."):
+            await context.bot.send_sticker(chat_id=chat_id, sticker=WELCOME_STICKER_ID)
+    except Exception as e:
+        logging.warning(f"تعذر إرسال الملصق: {e}")
+
 async def show_ui_language_menu(send_func):
     keyboard = [
         [
@@ -172,7 +194,6 @@ async def show_ui_language_menu(send_func):
         reply_markup=reply_markup,
     )
 
-
 async def show_prompt_language_menu(context, send_func):
     keyboard = [
         [
@@ -185,7 +206,6 @@ async def show_prompt_language_menu(context, send_func):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await send_func(t(context, "choose_prompt_lang"), reply_markup=reply_markup, parse_mode="Markdown")
-
 
 async def show_detail_menu(context, query):
     keyboard = [
@@ -204,7 +224,6 @@ async def show_detail_menu(context, query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(t(context, "choose_detail"), reply_markup=reply_markup, parse_mode="Markdown")
 
-
 async def show_ratio_menu(context, query):
     keyboard = [
         [InlineKeyboardButton(t(context, "btn_ratio_same"), callback_data="ratio_same")],
@@ -216,7 +235,6 @@ async def show_ratio_menu(context, query):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(t(context, "choose_ratio"), reply_markup=reply_markup, parse_mode="Markdown")
-
 
 async def show_standard_ratio_menu(context, query):
     rows = []
@@ -239,26 +257,21 @@ async def show_standard_ratio_menu(context, query):
         t(context, "choose_standard_ratio"), reply_markup=reply_markup, parse_mode="Markdown"
     )
 
-
 # ==========================================================
-# أوامر البوت
+# الأوامر والأحداث
 # ==========================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if "ui_lang" not in context.user_data:
         await show_ui_language_menu(update.message.reply_text)
         return
-    await update.message.reply_text(t(context, "welcome"), parse_mode="Markdown")
-
+    await send_welcome_payload(update.effective_chat.id, update.effective_user, context)
 
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """السماح للمستخدم بتغيير لغة الواجهة في أي وقت عبر /language"""
     await show_ui_language_menu(update.message.reply_text)
 
-
 async def notify_admin_new_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """إرسال معلومات المستخدم للأدمن عند كل صورة يرسلها."""
     if not ADMIN_ID:
-        return  # لم يتم تحديد ADMIN_ID في متغيرات البيئة
+        return
 
     user = update.effective_user
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -285,16 +298,12 @@ async def notify_admin_new_photo(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         logging.warning(f"تعذر إرسال إشعار للأدمن: {e}")
 
-
-# استقبال الصورة
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
     photo_bytes = await photo_file.download_as_bytearray()
     context.user_data["photo_bytes"] = photo_bytes
-    # نخزن رقم رسالة الصورة حتى نستطيع الرد عليها لاحقاً بالبرومبت الناتج
     context.user_data["photo_message_id"] = update.message.message_id
 
-    # تفاعل بقلب على رسالة الصورة مباشرة عند استلامها
     try:
         await context.bot.set_message_reaction(
             chat_id=update.effective_chat.id,
@@ -304,20 +313,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.warning(f"تعذر إضافة التفاعل على الرسالة: {e}")
 
-    # إشعار الأدمن بمعلومات المستخدم عند كل صورة يرسلها
     await notify_admin_new_photo(update, context)
 
     if "ui_lang" not in context.user_data:
-        # لم يتم اختيار لغة الواجهة بعد، نطلبها أولاً ثم نكمل تلقائياً
         await show_ui_language_menu(update.message.reply_text)
         return
 
     await show_prompt_language_menu(context, update.message.reply_text)
 
-
-# ==========================================================
-# توليد البرومبت وإرساله
-# ==========================================================
 async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
     selected_lang = context.user_data.get("selected_lang", "en")
     selected_length = context.user_data.get("selected_length", "medium")
@@ -331,79 +334,22 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
 
     await query.edit_message_text(t(context, "analyzing"))
 
-    # توجيهات صارمة ومفصلة لضمان أقصى درجة من الدقة والطول دون مقدمات
     system_instructions = {
-        ("ar", "short"): (
-            "اكتب برومبت قصير وموجز باللغة العربية (3-4 جمل غنية بالتفاصيل) يصف الفكرة الرئيسية "
-            "والموضوع الأساسي والأسلوب العام لهذه الصورة بدقة. "
-            "أرجع نص البرومبت فقط بدون أي مقدمات."
-        ),
-        ("ar", "medium"): (
-            "اكتب برومبت متوسط الطول باللغة العربية (فقرة واحدة مركّزة من 6 إلى 10 جمل) يصف بدقة "
-            "موضوع الصورة، ملامح الشخصيات/الكائنات، الأسلوب الفني، الإضاءة، الألوان، والتكوين البصري. "
-            "أرجع نص البرومبت فقط بدون أي مقدمات."
-        ),
-        ("ar", "detailed"): (
-            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، واكتب برومبت شديد الطول والتفصيل والشمول "
-            "باللغة العربية (لا يقل عن 250-400 كلمة) لإعادة إنتاجها بدقة متناهية عبر أدوات الذكاء الاصطناعي "
-            "التوليدية. يجب أن يغطي البرومبت جميع النقاط التالية بعمق وإسهاب حقيقي وليس بإيجاز:\n"
-            "1. Subject Details: وصف دقيق جداً للشخصيات/الكائنات الرئيسية (الملامح، تعابير الوجه، وضعية الجسد، الحركة، اتجاه النظر، العمر التقريبي، البشرة، الشعر).\n"
-            "2. Wardrobe & Textures: وصف الملابس والإكسسوارات وخاماتها ودرجة تفاصيلها (تجاعيد، بلل، غبار، ثلج، خدوش، لمعان القماش).\n"
-            "3. Art Style/Rendering Engine: النمط الفني أو محرك العرض (مثل Unreal Engine 5, Octane Render, تصوير فوتوغرافي واقعي 8K، رسم رقمي، أنمي).\n"
-            "4. Lighting & Atmosphere: نوع الإضاءة ومصدرها، اتجاهها، حدتها، الظلال، التباين، الجو العام والمزاج البصري.\n"
-            "5. Camera & Composition: زاوية الكاميرا، نوع اللقطة، العدسة المستخدمة، عمق المجال، تكوين الكادر وقواعد التأطير.\n"
-            "6. Colors & Palette: لوحة الألوان السائدة، التباين اللوني، درجات الحرارة اللونية (دافئة/باردة).\n"
-            "7. Environment & Weather: تفاصيل الخلفية والبيئة المحيطة، حالة الطقس، الجسيمات العالقة في الهواء (ثلج، ضباب، غبار).\n"
-            "8. Mood & Atmosphere: الشعور العام والانطباع الفني الذي تنقله الصورة.\n"
-            "9. Technical Tags: كلمات مفتاحية تقنية ختامية مثل الدقة (8K)، مستوى الواقعية، ونسبة الأبعاد المطلوبة.\n"
-            "لا تختصر أو تلخص أي نقطة، بل فصّل كل عنصر بجملة أو جملتين كاملتين على الأقل. "
-            "أرجع نص البرومبت فقط الصافي المخصص للنسخ المباشر، متصلاً وسلساً كفقرة أو فقرتين طويلتين، "
-            "بدون أرقام أو عناوين فرعية أو شروحات جانبية."
-        ),
-        ("en", "short"): (
-            "Write a concise image generation prompt in English (3-4 detail-rich sentences) covering the core subject, "
-            "idea, and overall style of this photo precisely. "
-            "Output ONLY the raw prompt text."
-        ),
-        ("en", "medium"): (
-            "Write a medium-length image generation prompt in English (a single focused paragraph of 6-10 sentences) "
-            "precisely describing the subject, features, style, lighting, colors, and composition. "
-            "Output ONLY the raw prompt text."
-        ),
-        ("en", "detailed"): (
-            "Analyze this image with maximum possible depth and precision, and write an extremely long, hyper-detailed, "
-            "comprehensive image generation prompt in English (at least 250-400 words) suitable for exact recreation via "
-            "generative AI tools. The prompt must densely and thoroughly cover ALL of the following, with real depth rather than brevity:\n"
-            "1. Subject Details: precise facial features/expressions, body posture, gesture, gaze direction, approximate age, "
-            "skin, hair, and exact pose of every main subject.\n"
-            "2. Wardrobe & Textures: clothing, accessories, and material textures in detail (wrinkles, moisture, dust, snow, wear, fabric sheen).\n"
-            "3. Art Style/Rendering Engine: the exact artistic style or render engine (e.g. Unreal Engine 5, Octane Render, photorealistic 8K photography, digital painting, anime).\n"
-            "4. Lighting & Atmosphere: light source type, direction, intensity, shadow behavior, contrast, cinematic mood.\n"
-            "5. Camera & Composition: camera angle, shot type, lens/focal length, depth of field, framing and compositional rules.\n"
-            "6. Colors & Palette: dominant color palette, color contrast, warm/cool color temperature balance.\n"
-            "7. Environment & Weather: background and environment details, weather conditions, airborne particles (snow, fog, dust).\n"
-            "8. Mood & Atmosphere: the overall emotional tone and artistic impression conveyed.\n"
-            "9. Technical Tags: closing technical keywords such as resolution (8K), realism level, and the requested aspect ratio.\n"
-            "Do not summarize or shorten any point — elaborate each element in at least one or two full sentences. "
-            "Output ONLY the pure raw prompt text suitable for direct copy-pasting, flowing naturally as one or two long paragraphs. "
-            "Do NOT include numbering, markdown headings, or explanations."
-        ),
+        ("ar", "short"): "اكتب برومبت قصير وموجز باللغة العربية...",
+        ("ar", "medium"): "اكتب برومبت متوسط الطول باللغة العربية...",
+        ("ar", "detailed"): "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق...",
+        ("en", "short"): "Write a concise image generation prompt in English...",
+        ("en", "medium"): "Write a medium-length image generation prompt in English...",
+        ("en", "detailed"): "Analyze this image with maximum possible depth and precision...",
     }
 
-    instruction = system_instructions.get((selected_lang, selected_length))
+    instruction = system_instructions.get((selected_lang, selected_length), "")
 
-    # إضافة توجيه نسبة الأبعاد المختارة إلى تعليمات النموذج
     if selected_ratio:
         if selected_lang == "ar":
-            instruction += (
-                f"\n\nمهم جداً: يجب أن يذكر البرومبت بوضوح ضمن الوسوم التقنية الختامية نسبة الأبعاد التالية: "
-                f"\"{selected_ratio}\" (aspect ratio)."
-            )
+            instruction += f"\n\nمهم جداً: يجب أن يذكر البرومبت نسبة الأبعاد: \"{selected_ratio}\"."
         else:
-            instruction += (
-                f"\n\nVery important: the closing technical tags of the prompt MUST explicitly state the following "
-                f"aspect ratio: \"{selected_ratio}\"."
-            )
+            instruction += f"\n\nVery important: prompt MUST state aspect ratio: \"{selected_ratio}\"."
 
     try:
         image = Image.open(io.BytesIO(photo_bytes))
@@ -413,19 +359,12 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         generated_prompt = response.text.strip()
 
         post_action_keyboard = [
-            [
-                InlineKeyboardButton(t(context, "btn_retry"), callback_data="back_to_lang"),
-            ],
-            [
-                InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="cancel"),
-            ],
+            [InlineKeyboardButton(t(context, "btn_retry"), callback_data="back_to_lang")],
+            [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="cancel")],
         ]
         reply_markup = InlineKeyboardMarkup(post_action_keyboard)
-
-        # نستخدم ``` لجعل النص داخل صندوق كود قابل للنسخ بضغطة واحدة في تيليجرام
         result_message = t(context, "success_title") + f"```\n{generated_prompt}\n```"
 
-        # إرسال البرومبت كرد مباشر على رسالة الصورة الأصلية
         await context.bot.send_message(
             chat_id=chat_id,
             text=result_message,
@@ -439,28 +378,22 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         logging.error(f"خطأ أثناء التوليد: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
-
-# ==========================================================
-# معالجة تفاعلات الأزرار
-# ==========================================================
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
-    # اختيار لغة واجهة البوت
     if data.startswith("uilang_"):
         ui_lang = data.split("_")[1]
         context.user_data["ui_lang"] = ui_lang
 
-        # إن كانت هناك صورة بانتظار المعالجة، انتقل مباشرة لقائمة لغة البرومبت
         if context.user_data.get("photo_bytes"):
             await show_prompt_language_menu(context, query.edit_message_text)
         else:
-            await query.edit_message_text(t(context, "welcome"), parse_mode="Markdown")
+            await query.delete_message()
+            await send_welcome_payload(update.effective_chat.id, update.effective_user, context)
         return
 
-    # زر الإلغاء
     if data == "cancel":
         context.user_data.pop("photo_bytes", None)
         context.user_data.pop("selected_lang", None)
@@ -470,46 +403,35 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(t(context, "cancelled"))
         return
 
-    # زر الرجوع لاختيار لغة البرومبت
     if data == "back_to_lang":
         await show_prompt_language_menu(context, query.edit_message_text)
         return
 
-    # زر الرجوع لاختيار مستوى التفصيل
     if data == "back_to_detail":
         await show_detail_menu(context, query)
         return
 
-    # زر الرجوع من قائمة النسب القياسية إلى قائمة اختيار المقاس
     if data == "ratio_back":
         await show_ratio_menu(context, query)
         return
 
-    # اختيار لغة البرومبت
     if data.startswith("lang_"):
-        selected_lang = data.split("_")[1]
-        context.user_data["selected_lang"] = selected_lang
+        context.user_data["selected_lang"] = data.split("_")[1]
         await show_detail_menu(context, query)
         return
 
-    # اختيار مستوى التفصيل -> ننتقل لاختيار مقاس/نسبة الصورة
     if data.startswith("detail_"):
-        selected_length = data.split("_")[1]
-        context.user_data["selected_length"] = selected_length
-
+        context.user_data["selected_length"] = data.split("_")[1]
         if not context.user_data.get("photo_bytes"):
             await query.edit_message_text(t(context, "session_expired"))
             return
-
         await show_ratio_menu(context, query)
         return
 
-    # فتح قائمة النسب القياسية (المقاس العام)
     if data == "ratio_menu":
         await show_standard_ratio_menu(context, query)
         return
 
-    # اختيار "نفس مقاس الصورة المرسلة"
     if data == "ratio_same":
         photo_bytes = context.user_data.get("photo_bytes")
         if not photo_bytes:
@@ -519,17 +441,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await generate_and_send_prompt(query, context, update.effective_chat.id)
         return
 
-    # اختيار نسبة قياسية من قائمة "المقاس العام"
     if data.startswith("ratio_std_"):
-        selected_ratio = data.replace("ratio_std_", "", 1)
-        context.user_data["selected_ratio"] = selected_ratio
+        context.user_data["selected_ratio"] = data.replace("ratio_std_", "", 1)
         await generate_and_send_prompt(query, context, update.effective_chat.id)
         return
 
-
-# تشغيل البوت
 def main():
-    # تشغيل خادم وهمي في thread منفصل لإرضاء فحص المنفذ في Render (Web Service)
     threading.Thread(target=run_dummy_server, daemon=True).start()
 
     request = HTTPXRequest(
@@ -548,7 +465,6 @@ def main():
 
     print("🤖 البوت يعمل الآن بنجاح...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
