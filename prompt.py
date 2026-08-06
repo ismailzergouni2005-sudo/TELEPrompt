@@ -44,11 +44,34 @@ AVAILABLE_MODELS = [
     "gemini-3.5-flash-lite",
 ]
 
+# نماذج توليد/تعديل الصور (تُستخدم في ميزة تحويل نمط الصورة)
+IMAGE_MODELS = [
+    "gemini-3.1-flash-image",
+    "gemini-2.5-flash-image",
+]
+
 GENERATION_CONFIG = {
     "max_output_tokens": 1500,
     "temperature": 0.7,
     "top_p": 0.9,
 }
+
+IMAGE_GENERATION_CONFIG = {
+    "response_modalities": ["TEXT", "IMAGE"],
+}
+
+# قائمة الأنماط الفنية المتاحة لميزة "تحويل نمط الصورة"
+# كل عنصر: (المفتاح, التسمية بالعربية, التسمية بالإنجليزية, وصف النمط للنموذج بالإنجليزية)
+STYLE_PRESETS = [
+    ("anime", "🎌 أنمي ياباني", "🎌 Japanese Anime", "Japanese anime / manga"),
+    ("watercolor", "🎨 ألوان مائية", "🎨 Watercolor Painting", "soft watercolor painting"),
+    ("oil_painting", "🖌️ لوحة زيتية", "🖌️ Oil Painting", "classical oil painting"),
+    ("cyberpunk", "🌆 سايبربانك", "🌆 Cyberpunk", "neon-lit futuristic cyberpunk"),
+    ("sketch", "✏️ رسم بالقلم الرصاص", "✏️ Pencil Sketch", "detailed black and white pencil sketch"),
+    ("3d_cartoon", "🧸 كرتون ثلاثي الأبعاد", "🧸 3D Cartoon", "Pixar-style 3D cartoon render"),
+    ("van_gogh", "🌻 أسلوب فان جوخ", "🌻 Van Gogh Style", "Van Gogh style impressionist painting with visible brush strokes"),
+    ("pixel_art", "👾 بيكسل آرت", "👾 Pixel Art", "retro 16-bit pixel art"),
+]
 
 STANDARD_RATIOS = [
     ("1:1", "1:1  (مربع / Square)"),
@@ -133,19 +156,6 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     output_stream.seek(0)
     return output_stream
 
-def local_remove_background(photo_bytes: bytearray) -> io.BytesIO:
-    # استيراد كسول: يتحمّل فقط عند أول استخدام فعلي للميزة، حتى لا يؤخر
-    # إقلاع السيرفر ويمنع Render من رصد فتح البورت في الوقت المحدد.
-    from rembg import remove as rembg_remove
-
-    input_image = Image.open(io.BytesIO(photo_bytes)).convert("RGBA")
-    output_image = rembg_remove(input_image)
-
-    output_stream = io.BytesIO()
-    output_image.save(output_stream, format="PNG")
-    output_stream.seek(0)
-    return output_stream
-
 def get_welcome_text(user, ui_lang="ar"):
     user_mention = f"[{user.first_name}](tg://user?id={user.id})"
     
@@ -175,7 +185,8 @@ TEXTS = {
         "choose_main_mode": "🎯 **اختر الخدمة المطلوبة للصورة:**",
         "btn_extract_prompt": "📝 استخراج البرومبت (Prompt)",
         "btn_upscale_image": "🚀 تحسين الجودة والحدة (Free HD Upscale)",
-        "btn_remove_bg": "✂️ إزالة الخلفية (Remove Background)",
+        "btn_style_convert": "🎨 تحويل نمط الصورة (Style Transfer)",
+        "choose_style": "🎨 **اختر النمط الفني الذي تريد تحويل الصورة إليه:**",
         "choose_prompt_lang": "🌐 **الخطوة 1/3:** اختر لغة البرومبت المطلوب:",
         "choose_detail": "⚙️ **الخطوة 2/3:** اختر مستوى تفصيل البرومبت:",
         "choose_ratio": "📐 **الخطوة 3/3:** اختر مقاس/نسبة أبعاد الصورة:",
@@ -192,10 +203,10 @@ TEXTS = {
         "session_expired": "⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة من جديد.",
         "analyzing": "⏳ جاري تحليل عناصر الصورة واستخراج البرومبت...",
         "enhancing": "⚡ جاري معالجة وتكبير أبعاد الصورة وإبراز حدتها محلياً...",
-        "removing_bg": "✂️ جاري إزالة خلفية الصورة محلياً...",
+        "converting_style": "🎨 جاري تحويل نمط الصورة بالذكاء الاصطناعي...",
         "success_title": "✅ **تم استخراج البرومبت بنجاح!**\n*(اضغط على النص أدناه لنسخه فوراً)*\n\n",
         "success_enhance": "✨ **تم رفع دقة الصورة وتحسين وضوح التفاصيل بنجاح!**",
-        "success_remove_bg": "✂️ **تم إزالة خلفية الصورة بنجاح!** (الخلفية شفافة، افتح الملف في تطبيق يدعم الشفافية)",
+        "success_style": "🎨 **تم تحويل نمط الصورة بنجاح!** (بدون أي علامة مائية)",
         "btn_retry": "🔄 استخراج بمستوى/لغة أخرى",
         "btn_new_photo": "📸 أرسل صورة جديدة",
         "error_generation": "❌ حدث خطأ أثناء المعالجة: ",
@@ -206,7 +217,8 @@ TEXTS = {
         "choose_main_mode": "🎯 **Choose the service for your image:**",
         "btn_extract_prompt": "📝 Extract Prompt",
         "btn_upscale_image": "🚀 Ultra HD Upscale (Free)",
-        "btn_remove_bg": "✂️ Remove Background",
+        "btn_style_convert": "🎨 Convert Image Style",
+        "choose_style": "🎨 **Choose the art style to convert your image to:**",
         "choose_prompt_lang": "🌐 **Step 1/3:** Choose prompt language:",
         "choose_detail": "⚙️ **Step 2/3:** Choose detail level:",
         "choose_ratio": "📐 **Step 3/3:** Choose aspect ratio:",
@@ -223,10 +235,10 @@ TEXTS = {
         "session_expired": "⚠️ Session expired. Please resend the image.",
         "analyzing": "⏳ Analyzing image and extracting prompt...",
         "enhancing": "⚡ Processing image sharpness and resolution...",
-        "removing_bg": "✂️ Removing image background locally...",
+        "converting_style": "🎨 Converting image style with AI...",
         "success_title": "✅ **Prompt extracted successfully!**\n*(Tap below to copy)*\n\n",
         "success_enhance": "✨ **Image scaled up & details enhanced successfully!**",
-        "success_remove_bg": "✂️ **Background removed successfully!** (Transparent background — open in an app that supports transparency)",
+        "success_style": "🎨 **Image style converted successfully!** (No watermark added)",
         "btn_retry": "🔄 Extract with other options",
         "btn_new_photo": "📸 Send a new image",
         "error_generation": "❌ An error occurred: ",
@@ -289,7 +301,7 @@ async def show_main_mode_menu(context, send_func):
     keyboard = [
         [InlineKeyboardButton(t(context, "btn_extract_prompt"), callback_data="mode_prompt")],
         [InlineKeyboardButton(t(context, "btn_upscale_image"), callback_data="mode_upscale")],
-        [InlineKeyboardButton(t(context, "btn_remove_bg"), callback_data="mode_removebg")],
+        [InlineKeyboardButton(t(context, "btn_style_convert"), callback_data="mode_style")],
         [InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -324,6 +336,26 @@ async def show_detail_menu(context, query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(t(context, "choose_detail"), reply_markup=reply_markup, parse_mode="Markdown")
 
+
+async def show_style_menu(context, query):
+    ui_lang = context.user_data.get("ui_lang", "ar")
+    label_index = 1 if ui_lang == "ar" else 2
+
+    rows = []
+    for i in range(0, len(STYLE_PRESETS), 2):
+        pair = STYLE_PRESETS[i:i + 2]
+        rows.append([
+            InlineKeyboardButton(preset[label_index], callback_data=f"style_{preset[0]}")
+            for preset in pair
+        ])
+
+    rows.append([
+        InlineKeyboardButton(t(context, "btn_back"), callback_data="back_to_main_mode"),
+        InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel"),
+    ])
+
+    reply_markup = InlineKeyboardMarkup(rows)
+    await query.edit_message_text(t(context, "choose_style"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await notify_channel(update.effective_user, "قام بتشغيل البوت (/start)", context)
@@ -395,7 +427,42 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
-async def process_remove_bg(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
+def _run_genai_image(instruction, image, models_order=None):
+    """تحويل نمط الصورة عبر نماذج Gemini المولّدة للصور، مع التنقل بين المفاتيح والنماذج
+    بنفس أسلوب _run_genai، بشكل متزامن متوافق مع run_in_executor."""
+    last_error = None
+    models_to_try = models_order or IMAGE_MODELS
+
+    if not API_KEYS:
+        raise RuntimeError("لا توجد أي مفاتيح API صالحة في متغير API_KEYS.")
+
+    for api_key in API_KEYS:
+        genai.configure(api_key=api_key)
+        for model_name in models_to_try:
+            try:
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content(
+                    [instruction, image],
+                    generation_config=genai.types.GenerationConfig(**IMAGE_GENERATION_CONFIG),
+                )
+                for part in response.candidates[0].content.parts:
+                    if getattr(part, "inline_data", None) and part.inline_data.data:
+                        output_stream = io.BytesIO(part.inline_data.data)
+                        output_stream.seek(0)
+                        return output_stream
+            except Exception as e:
+                masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
+                logging.warning(f"فشل نموذج الصورة {model_name} بالمفتاح {masked_key}: {e}")
+                last_error = e
+                continue
+
+    raise last_error or RuntimeError("فشل توليد الصورة بكل المفاتيح والنماذج.")
+
+async def generate_image_with_fallback(instruction, image, models_order=None):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _run_genai_image, instruction, image, models_order)
+
+async def process_style_conversion(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user, style_key):
     photo_bytes = context.user_data.get("photo_bytes")
     photo_message_id = context.user_data.get("photo_message_id")
 
@@ -403,11 +470,25 @@ async def process_remove_bg(query, context: ContextTypes.DEFAULT_TYPE, chat_id, 
         await query.edit_message_text(t(context, "session_expired"))
         return
 
-    await query.edit_message_text(t(context, "removing_bg"))
+    preset = next((p for p in STYLE_PRESETS if p[0] == style_key), None)
+    if not preset:
+        await query.edit_message_text(t(context, "session_expired"))
+        return
+    style_description = preset[3]
+
+    await query.edit_message_text(t(context, "converting_style"))
+
+    instruction = (
+        f"Transform the provided image into a {style_description} art style. "
+        "Preserve the original subject, composition, pose and framing as closely as possible; "
+        "only change the artistic rendering/style. "
+        "Do not add any watermark, logo, signature, caption, text overlay, or frame to the image. "
+        "Output only the edited image, with no watermark whatsoever."
+    )
 
     try:
-        loop = asyncio.get_running_loop()
-        result_stream = await loop.run_in_executor(None, local_remove_background, photo_bytes)
+        image = Image.open(io.BytesIO(photo_bytes))
+        result_stream = await generate_image_with_fallback(instruction, image)
 
         post_action_keyboard = [
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
@@ -417,19 +498,23 @@ async def process_remove_bg(query, context: ContextTypes.DEFAULT_TYPE, chat_id, 
         await context.bot.send_document(
             chat_id=chat_id,
             document=result_stream,
-            filename="no_background.png",
-            caption=t(context, "success_remove_bg"),
+            filename="styled_image.png",
+            caption=t(context, "success_style"),
             parse_mode="Markdown",
             reply_markup=reply_markup,
             reply_to_message_id=photo_message_id,
         )
         await query.delete_message()
 
-        await notify_channel(user, "قام بإزالة خلفية صورة ✂️", context)
+        await notify_channel(user, "قام بتحويل نمط صورة 🎨", context)
 
     except Exception as e:
-        logging.error(f"خطأ أثناء إزالة الخلفية: {e}")
-        await query.message.reply_text(t(context, "error_generation") + str(e))
+        logging.error(f"خطأ أثناء تحويل نمط الصورة: {e}")
+        err_str = str(e)
+        if "429" in err_str or "quota" in err_str.lower():
+            await query.message.reply_text(t(context, "quota_error"))
+        else:
+            await query.message.reply_text(t(context, "error_generation") + err_str)
 
 def _run_genai(instruction, image, models_order=None, generation_config=None):
     """الدالة الداخلية للتنقل بين المفاتيح والنماذج بأسلوب متزامن متوافق مع run_in_executor"""
@@ -648,8 +733,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await process_upscale(query, context, update.effective_chat.id, update.effective_user)
         return
 
-    if data == "mode_removebg":
-        await process_remove_bg(query, context, update.effective_chat.id, update.effective_user)
+    if data == "mode_style":
+        await show_style_menu(context, query)
+        return
+
+    if data.startswith("style_"):
+        style_key = data[len("style_"):]
+        await process_style_conversion(query, context, update.effective_chat.id, update.effective_user, style_key)
         return
 
     if data == "back_to_main_mode":
