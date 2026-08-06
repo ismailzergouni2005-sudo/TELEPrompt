@@ -5,3 +5,5 @@ httpx>=0.24.0
 replicate
 opencv-python-headless
 numpy
+rembg
+onnxruntime
