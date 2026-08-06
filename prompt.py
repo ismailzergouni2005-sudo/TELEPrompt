@@ -27,7 +27,7 @@ logging.basicConfig(
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # معرف القناة لإرسال الإشعارات
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
@@ -50,20 +50,24 @@ STANDARD_RATIOS = [
     ("21:9", "21:9  (سينمائي / Cinematic)"),
 ]
 
-def run_dummy_server():
+# --- تعديل السيرفر الوهمي للاستجابة السريعة لمراقبة الصحة ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(b"OK - Bot is Alive")
+
+    def log_message(self, format, *args):
+        # تعطيل سجلات الطلبات لمنع ملء الـ Logs
+        pass
+
+def start_health_server():
     port = int(os.getenv("PORT", 10000))
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot is running")
-        def log_message(self, format, *args):
-            pass
-    server = HTTPServer(("0.0.0.0", port), Handler)
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
 async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
-    """دالة إرسال الإشعارات لقناة التليجرام بشكل آمن لمنع أخطاء Markdown"""
     target_id = CHANNEL_ID or ADMIN_ID
     if not target_id:
         return
@@ -101,7 +105,6 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"تعذر إرسال الإشعار للقناة: {e}")
 
 def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
-    """تحسين الجودة والحدة ومضاعفة الأبعاد محلياً"""
     image_np = np.frombuffer(photo_bytes, np.uint8)
     img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
@@ -549,7 +552,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 def main():
-    threading.Thread(target=run_dummy_server, daemon=True).start()
+    # تشغيل السيرفر الوهمي بخيط (Thread) منفصل
+    threading.Thread(target=start_health_server, daemon=True).start()
 
     request = HTTPXRequest(
         connect_timeout=30.0,
