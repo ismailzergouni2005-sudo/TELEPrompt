@@ -35,8 +35,9 @@ WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDG
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-3.6-flash")
 
+# تقليل الحجم الأقصى للمخرجات لتجنب تجاوز حد تليجرام
 GENERATION_CONFIG = {
-    "max_output_tokens": 4096,
+    "max_output_tokens": 1500,
     "temperature": 0.7,
     "top_p": 0.9,
 }
@@ -50,7 +51,6 @@ STANDARD_RATIOS = [
     ("21:9", "21:9  (سينمائي / Cinematic)"),
 ]
 
-# --- تعديل السيرفر الوهمي للاستجابة السريعة لمراقبة الصحة ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -59,7 +59,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"OK - Bot is Alive")
 
     def log_message(self, format, *args):
-        # تعطيل سجلات الطلبات لمنع ملء الـ Logs
         pass
 
 def start_health_server():
@@ -441,6 +440,10 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
     try:
         generated_prompt = response.text.strip()
 
+        # القص الآمن إذا كان النص المولد أطول من حد تليجرام المسموح للرسالة
+        if len(generated_prompt) > 3800:
+            generated_prompt = generated_prompt[:3800] + "..."
+
         post_action_keyboard = [
             [InlineKeyboardButton(t(context, "btn_retry"), callback_data="back_to_lang")],
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
@@ -552,7 +555,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 def main():
-    # تشغيل السيرفر الوهمي بخيط (Thread) منفصل
     threading.Thread(target=start_health_server, daemon=True).start()
 
     request = HTTPXRequest(
