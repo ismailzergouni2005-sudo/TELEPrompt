@@ -323,4 +323,116 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
         ]
         reply_markup = InlineKeyboardMarkup(post_action_keyboard)
-        result_message = t(context, "success_title") + f"```\n{generated_prompt}\n
+        result_message = t(context, "success_title") + f"```\n{generated_prompt}\n```"
+
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=result_message,
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+            reply_to_message_id=photo_message_id,
+        )
+        await query.delete_message()
+
+    except Exception as e:
+        logging.error(f"خطأ إرسال الرسالة: {e}")
+        await query.message.reply_text(t(context, "error_generation") + str(e))
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+
+    if data.startswith("uilang_"):
+        ui_lang = data.split("_")[1]
+        context.user_data["ui_lang"] = ui_lang
+
+        if context.user_data.get("photo_bytes"):
+            await show_prompt_language_menu(context, query.edit_message_text)
+        else:
+            await query.delete_message()
+            await send_welcome_payload(update.effective_chat.id, update.effective_user, context)
+        return
+
+    if data == "new_photo_request":
+        context.user_data.pop("photo_bytes", None)
+        context.user_data.pop("selected_lang", None)
+        context.user_data.pop("selected_length", None)
+        context.user_data.pop("selected_ratio", None)
+        context.user_data.pop("photo_message_id", None)
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=t(context, "ready_for_new")
+        )
+        return
+
+    if data == "cancel":
+        context.user_data.pop("photo_bytes", None)
+        await query.edit_message_text(t(context, "cancelled"))
+        return
+
+    if data == "back_to_lang":
+        await show_prompt_language_menu(context, query.edit_message_text)
+        return
+
+    if data == "back_to_detail":
+        await show_detail_menu(context, query)
+        return
+
+    if data == "ratio_back":
+        await show_ratio_menu(context, query)
+        return
+
+    if data.startswith("lang_"):
+        context.user_data["selected_lang"] = data.split("_")[1]
+        await show_detail_menu(context, query)
+        return
+
+    if data.startswith("detail_"):
+        context.user_data["selected_length"] = data.split("_")[1]
+        if not context.user_data.get("photo_bytes"):
+            await query.edit_message_text(t(context, "session_expired"))
+            return
+        await show_ratio_menu(context, query)
+        return
+
+    if data == "ratio_menu":
+        await show_standard_ratio_menu(context, query)
+        return
+
+    if data == "ratio_same":
+        photo_bytes = context.user_data.get("photo_bytes")
+        if not photo_bytes:
+            await query.edit_message_text(t(context, "session_expired"))
+            return
+        context.user_data["selected_ratio"] = compute_image_ratio(photo_bytes)
+        await generate_and_send_prompt(query, context, update.effective_chat.id)
+        return
+
+    if data.startswith("ratio_std_"):
+        context.user_data["selected_ratio"] = data.replace("ratio_std_", "", 1)
+        await generate_and_send_prompt(query, context, update.effective_chat.id)
+        return
+
+def main():
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
+    request = HTTPXRequest(
+        connect_timeout=30.0,
+        read_timeout=30.0,
+        write_timeout=30.0,
+        pool_timeout=30.0,
+    )
+
+    app = Application.builder().token(TELEGRAM_TOKEN).request(request).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("language", language_command))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(CallbackQueryHandler(button_callback))
+
+    print("🤖 البوت يعمل الآن بنجاح...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
