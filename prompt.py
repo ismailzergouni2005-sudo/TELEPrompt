@@ -303,4 +303,4 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
         ]
         reply_markup = InlineKeyboardMarkup(post_action_keyboard)
-        result_message = t(context, "success_title") + f"```\n{generated_prompt}\n
+       result_message = t(context, "success_title") + f"```\n{generated_prompt}\n```"
