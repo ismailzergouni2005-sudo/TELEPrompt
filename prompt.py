@@ -4,12 +4,11 @@ import math
 import logging
 import threading
 import asyncio
-import httpx
-import replicate
-from datetime import datetime
+import numpy as np
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
+import cv2
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from telegram.ext import (
     Application,
@@ -28,7 +27,6 @@ logging.basicConfig(
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_ID = os.getenv("ADMIN_ID")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
 
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
@@ -91,42 +89,44 @@ async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.warning(f"تعذر إرسال بيانات المستخدم للأدمن: {e}")
 
-async def ai_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
-    """تحسين الصورة فورياً باستخدام الاسم الرسمي المستقر لنموذج Real-ESRGAN"""
-    if not REPLICATE_API_TOKEN:
-        raise ValueError("لم يتم ضبط متغير البيئة REPLICATE_API_TOKEN")
+async def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
+    """تحسين الجودة والحدة ومضاعفة الأبعاد محلياً مجاناً 100%"""
+    image_np = np.frombuffer(photo_bytes, np.uint8)
+    img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
-    input_data = {
-        "image": io.BytesIO(photo_bytes),
-        "scale": 4,  
-        "face_enhance": True  
-    }
+    # 1. تكبير الأبعاد بمقدار 2x باستخدام interpolation عالي الجودة (LANCZOS4)
+    height, width = img.shape[:2]
+    scaled_img = cv2.resize(img, (width * 2, height * 2), interpolation=cv2.INTER_LANCZOS4)
 
-    output_url = await asyncio.to_thread(
-        replicate.run,
-        "nightmareai/real-esrgan",
-        input=input_data
-    )
+    # 2. إزالة الضوضاء والتغبيش (Denoising)
+    denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 3, 3, 7, 21)
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(str(output_url))
-        if response.status_code == 200:
-            output_stream = io.BytesIO(response.content)
-            output_stream.seek(0)
-            return output_stream
-        else:
-            raise Exception("فشل تنزيل الصورة المعالجة من الخادم")
+    # 3. تحويل إلى PIL لإجراء تعديلات إضافية على الألوان والحدة
+    pil_img = Image.fromarray(cv2.cvtColor(denoised, cv2.COLOR_BGR2RGB))
+    
+    # زيادة حدة التفاصيل (Sharpness)
+    enhancer_sharp = ImageEnhance.Sharpness(pil_img)
+    pil_img = enhancer_sharp.enhance(1.8)
+
+    # ضبط التباين والألوان (Contrast & Color Enhancement)
+    enhancer_contrast = ImageEnhance.Contrast(pil_img)
+    pil_img = enhancer_contrast.enhance(1.1)
+
+    output_stream = io.BytesIO()
+    pil_img.save(output_stream, format="JPEG", quality=98)
+    output_stream.seek(0)
+    return output_stream
 
 def get_welcome_text(user, ui_lang="ar"):
     user_mention = f"[{user.first_name}](tg://user?id={user.id})"
     
     if ui_lang == "ar":
         return (
-            f"✨ أهلاً بك يا {user_mention} في **بوت استخراج البرومبت وتحسين الصور بالذكاء الاصطناعي**! ✨\n"
+            f"✨ أهلاً بك يا {user_mention} في **بوت استخراج البرومبت وتحسين الصور**! ✨\n"
             "━━━━━━━━━━━━━━━━━━━\n\n"
             "🛠️ **كيف يعمل هذا البوت؟**\n"
             "1️⃣ **أرسل أي صورة:** سيتعرف البوت عليها تلقائياً.\n"
-            "2️⃣ **اختر الخدمة:** استخراج البرومبت بالذكاء الاصطناعي أو تحسين الجودة لدقة (4K HD).\n"
+            "2️⃣ **اختر الخدمة:** استخراج البرومبت بالذكاء الاصطناعي أو تحسين الجودة والحدة مجاناً.\n"
             "3️⃣ **استلم النتيجة:** احصل على البرومبت أو الصورة المحسنة فوراً!\n\n"
             "👇 **ابدأ الآن بإرسال صورتك!**"
         )
@@ -136,7 +136,7 @@ def get_welcome_text(user, ui_lang="ar"):
             "━━━━━━━━━━━━━━━━━━━\n\n"
             "🛠️ **How does this bot work?**\n"
             "1️⃣ **Send an Image:** The bot will analyze it automatically.\n"
-            "2️⃣ **Choose Action:** Extract AI prompt or Upscale image quality to 4K HD.\n"
+            "2️⃣ **Choose Action:** Extract AI prompt or Upscale image quality to HD.\n"
             "3️⃣ **Get Results:** Copy your prompt or download your high-res image!\n\n"
             "👇 **Start now by sending your image!**"
         )
@@ -145,7 +145,7 @@ TEXTS = {
     "ar": {
         "choose_main_mode": "🎯 **اختر الخدمة المطلوبة للصورة:**",
         "btn_extract_prompt": "📝 استخراج البرومبت (Prompt)",
-        "btn_upscale_image": "🚀 تحسين الجودة بدقة خارقة (AI 4K Upscale)",
+        "btn_upscale_image": "🚀 تحسين الجودة والحدة (Free HD Upscale)",
         "choose_prompt_lang": "🌐 **الخطوة 1/3:** اختر لغة البرومبت المطلوب:",
         "choose_detail": "⚙️ **الخطوة 2/3:** اختر مستوى تفصيل البرومبت:",
         "choose_ratio": "📐 **الخطوة 3/3:** اختر مقاس/نسبة أبعاد الصورة:",
@@ -161,9 +161,9 @@ TEXTS = {
         "cancelled": "🚫 تم إلغاء العملية الحالية. أرسل صورة جديدة في أي وقت.",
         "session_expired": "⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة من جديد.",
         "analyzing": "⏳ جاري تحليل عناصر الصورة واستخراج البرومبت...",
-        "enhancing": "⚡ جاري إعادة بناء وتكبير دقة الصورة بالذكاء الاصطناعي (قد يستغرق 10-20 ثانية)...",
+        "enhancing": "⚡ جاري معالجة وتكبير أبعاد الصورة وإبراز حدتها محلياً...",
         "success_title": "✅ **تم استخراج البرومبت بنجاح!**\n*(اضغط على النص أدناه لنسخه فوراً)*\n\n",
-        "success_enhance": "✨ **تم تحسين جودة الصورة وإعادة بناء تفاصيلها بنجاح (4K)!**",
+        "success_enhance": "✨ **تم رفع دقة الصورة وتحسين وضوح التفاصيل بنجاح!**",
         "btn_retry": "🔄 استخراج بمستوى/لغة أخرى",
         "btn_new_photo": "📸 أرسل صورة جديدة",
         "error_generation": "❌ حدث خطأ أثناء المعالجة: ",
@@ -172,7 +172,7 @@ TEXTS = {
     "en": {
         "choose_main_mode": "🎯 **Choose the service for your image:**",
         "btn_extract_prompt": "📝 Extract Prompt",
-        "btn_upscale_image": "🚀 Ultra AI 4K Upscale",
+        "btn_upscale_image": "🚀 Ultra HD Upscale (Free)",
         "choose_prompt_lang": "🌐 **Step 1/3:** Choose prompt language:",
         "choose_detail": "⚙️ **Step 2/3:** Choose detail level:",
         "choose_ratio": "📐 **Step 3/3:** Choose aspect ratio:",
@@ -188,9 +188,9 @@ TEXTS = {
         "cancelled": "🚫 Operation cancelled. Send a new image anytime.",
         "session_expired": "⚠️ Session expired. Please resend the image.",
         "analyzing": "⏳ Analyzing image and extracting prompt...",
-        "enhancing": "⚡ Regenerating image elements using AI Upscaler (10-20s)...",
+        "enhancing": "⚡ Processing image sharpness and resolution...",
         "success_title": "✅ **Prompt extracted successfully!**\n*(Tap below to copy)*\n\n",
-        "success_enhance": "✨ **Image scaled up to 4K & details restored successfully!**",
+        "success_enhance": "✨ **Image scaled up & details enhanced successfully!**",
         "btn_retry": "🔄 Extract with other options",
         "btn_new_photo": "📸 Send a new image",
         "error_generation": "❌ An error occurred: ",
@@ -358,7 +358,7 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
     await query.edit_message_text(t(context, "enhancing"))
 
     try:
-        enhanced_stream = await ai_upscale_image(photo_bytes)
+        enhanced_stream = await asyncio.to_thread(local_upscale_image, photo_bytes)
         
         post_action_keyboard = [
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
@@ -368,7 +368,7 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
         await context.bot.send_document(
             chat_id=chat_id,
             document=enhanced_stream,
-            filename="enhanced_4k_image.jpg",
+            filename="enhanced_hd_image.jpg",
             caption=t(context, "success_enhance"),
             parse_mode="Markdown",
             reply_markup=reply_markup,
@@ -556,7 +556,7 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    print("🤖 البوت يعمل الآن بنجاح مع خاصية AI Super Resolution...")
+    print("🤖 البوت يعمل بنجاح مع معالج الصور المحلي المجاني...")
     app.run_polling()
 
 if __name__ == "__main__":
