@@ -44,34 +44,27 @@ AVAILABLE_MODELS = [
     "gemini-3.5-flash-lite",
 ]
 
-# نماذج توليد/تعديل الصور (تُستخدم في ميزة تحويل نمط الصورة)
-IMAGE_MODELS = [
-    "gemini-3.1-flash-image",
-    "gemini-2.5-flash-image",
-]
-
 GENERATION_CONFIG = {
     "max_output_tokens": 1500,
     "temperature": 0.7,
     "top_p": 0.9,
 }
 
-IMAGE_GENERATION_CONFIG = {
-    "response_modalities": ["TEXT", "IMAGE"],
-}
-
 # قائمة الأنماط الفنية المتاحة لميزة "تحويل نمط الصورة"
-# كل عنصر: (المفتاح, التسمية بالعربية, التسمية بالإنجليزية, وصف النمط للنموذج بالإنجليزية)
+# كل عنصر: (المفتاح, التسمية بالعربية, التسمية بالإنجليزية)
+# ملاحظة: المعالجة كلها محلية (OpenCV/PIL) بدون أي استدعاء لأي API خارجي،
+# لذلك الميزة مجانية بالكامل وفورية ولا تحتاج مفاتيح ولا اتصال بالإنترنت.
 STYLE_PRESETS = [
-    ("anime", "🎌 أنمي ياباني", "🎌 Japanese Anime", "Japanese anime / manga"),
-    ("watercolor", "🎨 ألوان مائية", "🎨 Watercolor Painting", "soft watercolor painting"),
-    ("oil_painting", "🖌️ لوحة زيتية", "🖌️ Oil Painting", "classical oil painting"),
-    ("cyberpunk", "🌆 سايبربانك", "🌆 Cyberpunk", "neon-lit futuristic cyberpunk"),
-    ("sketch", "✏️ رسم بالقلم الرصاص", "✏️ Pencil Sketch", "detailed black and white pencil sketch"),
-    ("3d_cartoon", "🧸 كرتون ثلاثي الأبعاد", "🧸 3D Cartoon", "Pixar-style 3D cartoon render"),
-    ("van_gogh", "🌻 أسلوب فان جوخ", "🌻 Van Gogh Style", "Van Gogh style impressionist painting with visible brush strokes"),
-    ("pixel_art", "👾 بيكسل آرت", "👾 Pixel Art", "retro 16-bit pixel art"),
+    ("anime", "🎌 أنمي/كرتوني", "🎌 Anime / Cartoon"),
+    ("watercolor", "🎨 ألوان مائية", "🎨 Watercolor Painting"),
+    ("oil_painting", "🖌️ لوحة زيتية", "🖌️ Oil Painting"),
+    ("cyberpunk", "🌆 سايبربانك", "🌆 Cyberpunk"),
+    ("sketch", "✏️ رسم بالقلم الرصاص", "✏️ Pencil Sketch"),
+    ("cartoon_3d", "🧸 كرتون بحواف بارزة", "🧸 Bold Cartoon"),
+    ("vintage", "🌻 لوحة انطباعية", "🌻 Impressionist Painting"),
+    ("pixel_art", "👾 بيكسل آرت", "👾 Pixel Art"),
 ]
+
 
 STANDARD_RATIOS = [
     ("1:1", "1:1  (مربع / Square)"),
@@ -427,44 +420,99 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
-def _run_genai_image(instruction, image, models_order=None):
-    """تحويل نمط الصورة عبر نماذج Gemini المولّدة للصور، مع التنقل بين المفاتيح والنماذج
-    بنفس أسلوب _run_genai، بشكل متزامن متوافق مع run_in_executor."""
-    last_error = None
-    models_to_try = models_order or IMAGE_MODELS
+def _style_cartoon_edges(img_bgr, sigma_color=200, sigma_space=200, block_size=9, c_val=9, blur_ksize=5, sat_boost=1.0):
+    """أساس مشترك لأنماط الكرتون/الأنمي: تنعيم الألوان + رسم الحواف السوداء فوقها."""
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+    gray_blur = cv2.medianBlur(gray, blur_ksize)
+    edges = cv2.adaptiveThreshold(
+        gray_blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, block_size, c_val
+    )
+    color = img_bgr
+    for _ in range(2):
+        color = cv2.bilateralFilter(color, d=9, sigmaColor=sigma_color, sigmaSpace=sigma_space)
+    edges_colored = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+    cartoon = cv2.bitwise_and(color, edges_colored)
+    if sat_boost != 1.0:
+        hsv = cv2.cvtColor(cartoon, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[..., 1] = np.clip(hsv[..., 1] * sat_boost, 0, 255)
+        cartoon = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+    return cartoon
 
-    if not API_KEYS:
-        raise RuntimeError("لا توجد أي مفاتيح API صالحة في متغير API_KEYS.")
+def _style_anime(img_bgr):
+    return _style_cartoon_edges(img_bgr, block_size=7, c_val=5, sat_boost=1.3)
 
-    for api_key in API_KEYS:
-        genai.configure(api_key=api_key)
-        for model_name in models_to_try:
-            try:
-                model = genai.GenerativeModel(model_name)
-                # نمرر generation_config كـ dict عادي (وليس عبر genai.types.GenerationConfig)
-                # لأن بعض إصدارات مكتبة google-generativeai القديمة لا تعرف معامل
-                # response_modalities في الـ constructor رغم أن الـ API نفسه يدعمه،
-                # بينما تمريره كـ dict يتجاوز هذا القيد لأنه يمر مباشرة للبروتوكول الأساسي.
-                response = model.generate_content(
-                    [instruction, image],
-                    generation_config=IMAGE_GENERATION_CONFIG,
-                )
-                for part in response.candidates[0].content.parts:
-                    if getattr(part, "inline_data", None) and part.inline_data.data:
-                        output_stream = io.BytesIO(part.inline_data.data)
-                        output_stream.seek(0)
-                        return output_stream
-            except Exception as e:
-                masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-                logging.warning(f"فشل نموذج الصورة {model_name} بالمفتاح {masked_key}: {e}")
-                last_error = e
-                continue
+def _style_bold_cartoon(img_bgr):
+    return _style_cartoon_edges(img_bgr, block_size=11, c_val=8, sat_boost=1.15)
 
-    raise last_error or RuntimeError("فشل توليد الصورة بكل المفاتيح والنماذج.")
+def _style_watercolor(img_bgr):
+    return cv2.stylization(img_bgr, sigma_s=60, sigma_r=0.45)
 
-async def generate_image_with_fallback(instruction, image, models_order=None):
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _run_genai_image, instruction, image, models_order)
+def _style_oil_painting(img_bgr):
+    try:
+        # يتطلب حزمة opencv-contrib-python-headless (وحدة xphoto)
+        return cv2.xphoto.oilPainting(img_bgr, 7, 1)
+    except Exception:
+        # احتياطي في حال عدم توفر وحدة xphoto: تقريب لتأثير الرسم الزيتي
+        smooth = cv2.edgePreservingFilter(img_bgr, flags=cv2.RECURS_FILTER, sigma_s=60, sigma_r=0.4)
+        return cv2.stylization(smooth, sigma_s=60, sigma_r=0.6)
+
+def _style_impressionist(img_bgr):
+    base = _style_oil_painting(img_bgr)
+    hsv = cv2.cvtColor(base, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[..., 1] = np.clip(hsv[..., 1] * 1.35, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+def _style_pencil_sketch(img_bgr):
+    gray_sketch, _color_sketch = cv2.pencilSketch(img_bgr, sigma_s=60, sigma_r=0.07, shade_factor=0.05)
+    return cv2.cvtColor(gray_sketch, cv2.COLOR_GRAY2BGR)
+
+def _style_cyberpunk(img_bgr):
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[..., 1] = np.clip(hsv[..., 1] * 1.6, 0, 255)
+    boosted = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
+    b, g, r = cv2.split(boosted)
+    b = np.clip(b * 1.35, 0, 255)
+    r = np.clip(r * 1.15, 0, 255)
+    g = np.clip(g * 0.9, 0, 255)
+    neon = cv2.merge([b, g, r]).astype(np.uint8)
+    glow = cv2.GaussianBlur(neon, (0, 0), sigmaX=8)
+    return cv2.addWeighted(neon, 0.75, glow, 0.35, 0)
+
+def _style_pixel_art(img_bgr, pixel_size=14):
+    h, w = img_bgr.shape[:2]
+    small_w, small_h = max(1, w // pixel_size), max(1, h // pixel_size)
+    small = cv2.resize(img_bgr, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
+
+# ربط كل مفتاح نمط بدالة المعالجة المحلية الخاصة به
+STYLE_FILTERS = {
+    "anime": _style_anime,
+    "watercolor": _style_watercolor,
+    "oil_painting": _style_oil_painting,
+    "cyberpunk": _style_cyberpunk,
+    "sketch": _style_pencil_sketch,
+    "cartoon_3d": _style_bold_cartoon,
+    "vintage": _style_impressionist,
+    "pixel_art": _style_pixel_art,
+}
+
+def local_convert_image_style(photo_bytes: bytearray, style_key: str) -> io.BytesIO:
+    """يحوّل نمط الصورة محلياً بالكامل عبر OpenCV/PIL، بدون أي اتصال بأي API خارجي —
+    مجاني بالكامل وفوري ولا يحتاج أي مفتاح أو رصيد."""
+    filter_func = STYLE_FILTERS.get(style_key)
+    if filter_func is None:
+        raise ValueError(f"نمط غير معروف: {style_key}")
+
+    image_np = np.frombuffer(photo_bytes, np.uint8)
+    img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
+
+    result_bgr = filter_func(img)
+
+    pil_img = Image.fromarray(cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB))
+    output_stream = io.BytesIO()
+    pil_img.save(output_stream, format="PNG")
+    output_stream.seek(0)
+    return output_stream
 
 async def process_style_conversion(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user, style_key):
     photo_bytes = context.user_data.get("photo_bytes")
@@ -478,21 +526,12 @@ async def process_style_conversion(query, context: ContextTypes.DEFAULT_TYPE, ch
     if not preset:
         await query.edit_message_text(t(context, "session_expired"))
         return
-    style_description = preset[3]
 
     await query.edit_message_text(t(context, "converting_style"))
 
-    instruction = (
-        f"Transform the provided image into a {style_description} art style. "
-        "Preserve the original subject, composition, pose and framing as closely as possible; "
-        "only change the artistic rendering/style. "
-        "Do not add any watermark, logo, signature, caption, text overlay, or frame to the image. "
-        "Output only the edited image, with no watermark whatsoever."
-    )
-
     try:
-        image = Image.open(io.BytesIO(photo_bytes))
-        result_stream = await generate_image_with_fallback(instruction, image)
+        loop = asyncio.get_running_loop()
+        result_stream = await loop.run_in_executor(None, local_convert_image_style, photo_bytes, style_key)
 
         post_action_keyboard = [
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
@@ -534,7 +573,11 @@ def _run_genai(instruction, image, models_order=None, generation_config=None):
         for model_name in models_to_try:
             try:
                 model = genai.GenerativeModel(model_name)
-                response = model.generate_content([instruction, image], generation_config=gen_config)
+                response = model.generate_content(
+                    [instruction, image],
+                    generation_config=gen_config,
+                    request_options={"timeout": 45},
+                )
                 if response and response.text:
                     return response.text.strip()
             except Exception as e:
