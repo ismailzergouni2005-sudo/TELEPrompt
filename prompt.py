@@ -2,6 +2,7 @@ import os
 import io
 import logging
 import threading
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
 from PIL import Image
@@ -24,6 +25,7 @@ logging.basicConfig(
 # قراءة المفاتيح آمنة عبر متغيرات البيئة فقط
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+ADMIN_ID = os.getenv("ADMIN_ID")  # معرف تيليجرام الخاص بالأدمن لاستقبال إشعارات المستخدمين
 
 # إعداد نموذج Gemini
 genai.configure(api_key=GEMINI_API_KEY)
@@ -174,6 +176,37 @@ async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_ui_language_menu(update.message.reply_text)
 
 
+async def notify_admin_new_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """إرسال معلومات المستخدم للأدمن عند كل صورة يرسلها."""
+    if not ADMIN_ID:
+        return  # لم يتم تحديد ADMIN_ID في متغيرات البيئة
+
+    user = update.effective_user
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    full_name = user.full_name or "غير متوفر"
+    username = f"@{user.username}" if user.username else "لا يوجد يوزر"
+    user_id = user.id
+    tg_lang = user.language_code or "غير معروف"
+
+    admin_message = (
+        "📩 **مستخدم أرسل صورة**\n"
+        "━━━━━━━━━━━━━━\n"
+        f"👤 الاسم: {full_name}\n"
+        f"🔗 اليوزر: {username}\n"
+        f"🆔 المعرف: `{user_id}`\n"
+        f"🌐 لغة تيليجرام: {tg_lang}\n"
+        f"🕒 الوقت: {now}"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_ID, text=admin_message, parse_mode="Markdown"
+        )
+    except Exception as e:
+        logging.warning(f"تعذر إرسال إشعار للأدمن: {e}")
+
+
 # استقبال الصورة
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
@@ -191,6 +224,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logging.warning(f"تعذر إضافة التفاعل على الرسالة: {e}")
+
+    # إشعار الأدمن بمعلومات المستخدم عند كل صورة يرسلها
+    await notify_admin_new_photo(update, context)
 
     if "ui_lang" not in context.user_data:
         # لم يتم اختيار لغة الواجهة بعد، نطلبها أولاً ثم نكمل تلقائياً
