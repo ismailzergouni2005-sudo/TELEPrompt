@@ -7,3 +7,4 @@ opencv-python-headless
 numpy
 rembg
 onnxruntime
+opencv-contrib-python-headless
