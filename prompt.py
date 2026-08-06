@@ -92,24 +92,22 @@ async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"تعذر إرسال بيانات المستخدم للأدمن: {e}")
 
 async def ai_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
-    """تحسين الصورة فورياً وبشكل خارق باستخدام نموذج Real-ESRGAN بالذكاء الاصطناعي"""
+    """تحسين الصورة فورياً باستخدام الاسم الرسمي المستقر لنموذج Real-ESRGAN"""
     if not REPLICATE_API_TOKEN:
         raise ValueError("لم يتم ضبط متغير البيئة REPLICATE_API_TOKEN")
 
     input_data = {
         "image": io.BytesIO(photo_bytes),
-        "scale": 4,  # مضاعفة الأبعاد والدقة 4 مرات (4K)
-        "face_enhance": True  # تحسين تفاصيل الوجوه إذا كانت موجودة
+        "scale": 4,  
+        "face_enhance": True  
     }
 
-    # تشغيل نموذج Real-ESRGAN الفائق
     output_url = await asyncio.to_thread(
         replicate.run,
-        "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c52777002d25f784e47888dd5de3c19b54554d",
+        "nightmareai/real-esrgan",
         input=input_data
     )
 
-    # تنزيل الصورة الناتجة فائقة الجودة
     async with httpx.AsyncClient() as client:
         response = await client.get(str(output_url))
         if response.status_code == 200:
@@ -360,7 +358,6 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
     await query.edit_message_text(t(context, "enhancing"))
 
     try:
-        # معالجة بالذكاء الاصطناعي الفائق
         enhanced_stream = await ai_upscale_image(photo_bytes)
         
         post_action_keyboard = [
@@ -368,7 +365,6 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id):
         ]
         reply_markup = InlineKeyboardMarkup(post_action_keyboard)
 
-        # إرسالها كمستند (Document) لضمان عدم ضغط تليجرام لجودتها العالية
         await context.bot.send_document(
             chat_id=chat_id,
             document=enhanced_stream,
