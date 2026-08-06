@@ -10,6 +10,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
 from PIL import Image, ImageEnhance
 import cv2
+from rembg import remove as rembg_remove
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from telegram.ext import (
     Application,
@@ -129,6 +130,15 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     output_stream.seek(0)
     return output_stream
 
+def local_remove_background(photo_bytes: bytearray) -> io.BytesIO:
+    input_image = Image.open(io.BytesIO(photo_bytes)).convert("RGBA")
+    output_image = rembg_remove(input_image)
+
+    output_stream = io.BytesIO()
+    output_image.save(output_stream, format="PNG")
+    output_stream.seek(0)
+    return output_stream
+
 def get_welcome_text(user, ui_lang="ar"):
     user_mention = f"[{user.first_name}](tg://user?id={user.id})"
     
@@ -158,6 +168,7 @@ TEXTS = {
         "choose_main_mode": "🎯 **اختر الخدمة المطلوبة للصورة:**",
         "btn_extract_prompt": "📝 استخراج البرومبت (Prompt)",
         "btn_upscale_image": "🚀 تحسين الجودة والحدة (Free HD Upscale)",
+        "btn_remove_bg": "✂️ إزالة الخلفية (Remove Background)",
         "choose_prompt_lang": "🌐 **الخطوة 1/3:** اختر لغة البرومبت المطلوب:",
         "choose_detail": "⚙️ **الخطوة 2/3:** اختر مستوى تفصيل البرومبت:",
         "choose_ratio": "📐 **الخطوة 3/3:** اختر مقاس/نسبة أبعاد الصورة:",
@@ -174,8 +185,10 @@ TEXTS = {
         "session_expired": "⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة من جديد.",
         "analyzing": "⏳ جاري تحليل عناصر الصورة واستخراج البرومبت...",
         "enhancing": "⚡ جاري معالجة وتكبير أبعاد الصورة وإبراز حدتها محلياً...",
+        "removing_bg": "✂️ جاري إزالة خلفية الصورة محلياً...",
         "success_title": "✅ **تم استخراج البرومبت بنجاح!**\n*(اضغط على النص أدناه لنسخه فوراً)*\n\n",
         "success_enhance": "✨ **تم رفع دقة الصورة وتحسين وضوح التفاصيل بنجاح!**",
+        "success_remove_bg": "✂️ **تم إزالة خلفية الصورة بنجاح!** (الخلفية شفافة، افتح الملف في تطبيق يدعم الشفافية)",
         "btn_retry": "🔄 استخراج بمستوى/لغة أخرى",
         "btn_new_photo": "📸 أرسل صورة جديدة",
         "error_generation": "❌ حدث خطأ أثناء المعالجة: ",
@@ -186,6 +199,7 @@ TEXTS = {
         "choose_main_mode": "🎯 **Choose the service for your image:**",
         "btn_extract_prompt": "📝 Extract Prompt",
         "btn_upscale_image": "🚀 Ultra HD Upscale (Free)",
+        "btn_remove_bg": "✂️ Remove Background",
         "choose_prompt_lang": "🌐 **Step 1/3:** Choose prompt language:",
         "choose_detail": "⚙️ **Step 2/3:** Choose detail level:",
         "choose_ratio": "📐 **Step 3/3:** Choose aspect ratio:",
@@ -202,8 +216,10 @@ TEXTS = {
         "session_expired": "⚠️ Session expired. Please resend the image.",
         "analyzing": "⏳ Analyzing image and extracting prompt...",
         "enhancing": "⚡ Processing image sharpness and resolution...",
+        "removing_bg": "✂️ Removing image background locally...",
         "success_title": "✅ **Prompt extracted successfully!**\n*(Tap below to copy)*\n\n",
         "success_enhance": "✨ **Image scaled up & details enhanced successfully!**",
+        "success_remove_bg": "✂️ **Background removed successfully!** (Transparent background — open in an app that supports transparency)",
         "btn_retry": "🔄 Extract with other options",
         "btn_new_photo": "📸 Send a new image",
         "error_generation": "❌ An error occurred: ",
@@ -266,6 +282,7 @@ async def show_main_mode_menu(context, send_func):
     keyboard = [
         [InlineKeyboardButton(t(context, "btn_extract_prompt"), callback_data="mode_prompt")],
         [InlineKeyboardButton(t(context, "btn_upscale_image"), callback_data="mode_upscale")],
+        [InlineKeyboardButton(t(context, "btn_remove_bg"), callback_data="mode_removebg")],
         [InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -369,6 +386,42 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
 
     except Exception as e:
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
+        await query.message.reply_text(t(context, "error_generation") + str(e))
+
+async def process_remove_bg(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
+    photo_bytes = context.user_data.get("photo_bytes")
+    photo_message_id = context.user_data.get("photo_message_id")
+
+    if not photo_bytes:
+        await query.edit_message_text(t(context, "session_expired"))
+        return
+
+    await query.edit_message_text(t(context, "removing_bg"))
+
+    try:
+        loop = asyncio.get_running_loop()
+        result_stream = await loop.run_in_executor(None, local_remove_background, photo_bytes)
+
+        post_action_keyboard = [
+            [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
+        ]
+        reply_markup = InlineKeyboardMarkup(post_action_keyboard)
+
+        await context.bot.send_document(
+            chat_id=chat_id,
+            document=result_stream,
+            filename="no_background.png",
+            caption=t(context, "success_remove_bg"),
+            parse_mode="Markdown",
+            reply_markup=reply_markup,
+            reply_to_message_id=photo_message_id,
+        )
+        await query.delete_message()
+
+        await notify_channel(user, "قام بإزالة خلفية صورة ✂️", context)
+
+    except Exception as e:
+        logging.error(f"خطأ أثناء إزالة الخلفية: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
 def _run_genai(instruction, image, models_order=None, generation_config=None):
@@ -586,6 +639,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "mode_upscale":
         await process_upscale(query, context, update.effective_chat.id, update.effective_user)
+        return
+
+    if data == "mode_removebg":
+        await process_remove_bg(query, context, update.effective_chat.id, update.effective_user)
         return
 
     if data == "back_to_main_mode":
