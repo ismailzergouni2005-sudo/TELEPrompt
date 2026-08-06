@@ -10,7 +10,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
 from PIL import Image, ImageEnhance
 import cv2
-from rembg import remove as rembg_remove
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji
 from telegram.ext import (
     Application,
@@ -72,8 +71,12 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 def start_health_server():
     port = int(os.getenv("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logging.info(f"✅ Health check server listening on 0.0.0.0:{port}")
+        server.serve_forever()
+    except Exception as e:
+        logging.error(f"❌ فشل تشغيل خادم فحص الصحة على البورت {port}: {e}")
 
 async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     target_id = CHANNEL_ID or ADMIN_ID
@@ -131,6 +134,10 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     return output_stream
 
 def local_remove_background(photo_bytes: bytearray) -> io.BytesIO:
+    # استيراد كسول: يتحمّل فقط عند أول استخدام فعلي للميزة، حتى لا يؤخر
+    # إقلاع السيرفر ويمنع Render من رصد فتح البورت في الوقت المحدد.
+    from rembg import remove as rembg_remove
+
     input_image = Image.open(io.BytesIO(photo_bytes)).convert("RGBA")
     output_image = rembg_remove(input_image)
 
