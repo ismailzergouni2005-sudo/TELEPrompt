@@ -35,10 +35,12 @@ API_KEYS = [key.strip() for key in raw_keys.split(",") if key.strip()]
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
+# ملاحظة: تمت إزالة gemini-1.5-flash لأن جوجل أوقفته للمشاريع الجديدة
+# منذ أبريل 2025 (يرجع دائماً 404 not found على v1beta).
 AVAILABLE_MODELS = [
     "gemini-2.5-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
+    "gemini-2.5-flash-lite",
 ]
 
 GENERATION_CONFIG = {
@@ -399,7 +401,10 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
 def _run_genai(instruction, image):
     """الدالة الداخلية للتنقل بين المفاتيح والنماذج بأسلوب متزامن متوافق مع run_in_executor"""
     last_error = None
-    
+
+    if not API_KEYS:
+        raise RuntimeError("لا توجد أي مفاتيح API صالحة في متغير API_KEYS.")
+
     for api_key in API_KEYS:
         genai.configure(api_key=api_key)
         for model_name in AVAILABLE_MODELS:
@@ -409,6 +414,9 @@ def _run_genai(instruction, image):
                 if response and response.text:
                     return response.text.strip()
             except Exception as e:
+                # نسجل كل خطأ على حدة حتى نعرف بالضبط أي نموذج/مفتاح فشل ولماذا
+                masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
+                logging.warning(f"فشل النموذج {model_name} بالمفتاح {masked_key}: {e}")
                 last_error = e
                 continue
 
