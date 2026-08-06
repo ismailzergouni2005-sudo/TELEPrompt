@@ -50,22 +50,6 @@ GENERATION_CONFIG = {
     "top_p": 0.9,
 }
 
-# قائمة الأنماط الفنية المتاحة لميزة "تحويل نمط الصورة"
-# كل عنصر: (المفتاح, التسمية بالعربية, التسمية بالإنجليزية)
-# ملاحظة: المعالجة كلها محلية (OpenCV/PIL) بدون أي استدعاء لأي API خارجي،
-# لذلك الميزة مجانية بالكامل وفورية ولا تحتاج مفاتيح ولا اتصال بالإنترنت.
-STYLE_PRESETS = [
-    ("anime", "🎌 أنمي/كرتوني", "🎌 Anime / Cartoon"),
-    ("watercolor", "🎨 ألوان مائية", "🎨 Watercolor Painting"),
-    ("oil_painting", "🖌️ لوحة زيتية", "🖌️ Oil Painting"),
-    ("cyberpunk", "🌆 سايبربانك", "🌆 Cyberpunk"),
-    ("sketch", "✏️ رسم بالقلم الرصاص", "✏️ Pencil Sketch"),
-    ("cartoon_3d", "🧸 كرتون بحواف بارزة", "🧸 Bold Cartoon"),
-    ("vintage", "🌻 لوحة انطباعية", "🌻 Impressionist Painting"),
-    ("pixel_art", "👾 بيكسل آرت", "👾 Pixel Art"),
-]
-
-
 STANDARD_RATIOS = [
     ("1:1", "1:1  (مربع / Square)"),
     ("16:9", "16:9  (عريض / Widescreen)"),
@@ -74,6 +58,9 @@ STANDARD_RATIOS = [
     ("3:4", "3:4  (عمودي كلاسيكي)"),
     ("21:9", "21:9  (سينمائي / Cinematic)"),
 ]
+
+# رموز الساعة المتحركة المستخدمة كمؤشر انتظار بدل الساعة الرملية الثابتة ⏳
+CLOCK_FRAMES = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"]
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -132,17 +119,39 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"تعذر إرسال الإشعار للقناة: {e}")
 
 def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
+    """رفع دقة الصورة محلياً بقوة مضاعفة: تكبير عالي الجودة + إزالة ضوضاء أقوى +
+    تحسين تفاصيل (detail enhancement) + تباين تكيفي (CLAHE) + حدة إضافية عبر Unsharp Mask."""
     image_np = np.frombuffer(photo_bytes, np.uint8)
     img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
     height, width = img.shape[:2]
-    scaled_img = cv2.resize(img, (width * 2, height * 2), interpolation=cv2.INTER_LANCZOS4)
+    scale_factor = 2
+    scaled_img = cv2.resize(
+        img, (width * scale_factor, height * scale_factor), interpolation=cv2.INTER_LANCZOS4
+    )
 
-    denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 3, 3, 7, 21)
+    # إزالة الضوضاء بقوة أكبر مع الحفاظ على التفاصيل الدقيقة
+    denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 5, 5, 7, 21)
 
-    pil_img = Image.fromarray(cv2.cvtColor(denoised, cv2.COLOR_BGR2RGB))
-    pil_img = ImageEnhance.Sharpness(pil_img).enhance(1.8)
-    pil_img = ImageEnhance.Contrast(pil_img).enhance(1.1)
+    # إبراز التفاصيل والملامس الدقيقة محلياً
+    detail_enhanced = cv2.detailEnhance(denoised, sigma_s=12, sigma_r=0.2)
+
+    # تباين تكيفي (CLAHE) على قناة الإضاءة فقط للحفاظ على الألوان الطبيعية
+    lab = cv2.cvtColor(detail_enhanced, cv2.COLOR_BGR2LAB)
+    l_channel, a_channel, b_channel = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+    l_channel = clahe.apply(l_channel)
+    lab_merged = cv2.merge((l_channel, a_channel, b_channel))
+    contrast_boosted = cv2.cvtColor(lab_merged, cv2.COLOR_LAB2BGR)
+
+    # حدة إضافية قوية عبر Unsharp Masking لإبراز الحواف الدقيقة
+    gaussian = cv2.GaussianBlur(contrast_boosted, (0, 0), sigmaX=3)
+    sharpened = cv2.addWeighted(contrast_boosted, 1.8, gaussian, -0.8, 0)
+
+    pil_img = Image.fromarray(cv2.cvtColor(sharpened, cv2.COLOR_BGR2RGB))
+    pil_img = ImageEnhance.Sharpness(pil_img).enhance(2.2)
+    pil_img = ImageEnhance.Contrast(pil_img).enhance(1.15)
+    pil_img = ImageEnhance.Color(pil_img).enhance(1.08)
 
     output_stream = io.BytesIO()
     pil_img.save(output_stream, format="JPEG", quality=98)
@@ -178,8 +187,6 @@ TEXTS = {
         "choose_main_mode": "🎯 **اختر الخدمة المطلوبة للصورة:**",
         "btn_extract_prompt": "📝 استخراج البرومبت (Prompt)",
         "btn_upscale_image": "🚀 تحسين الجودة والحدة (Free HD Upscale)",
-        "btn_style_convert": "🎨 تحويل نمط الصورة (Style Transfer)",
-        "choose_style": "🎨 **اختر النمط الفني الذي تريد تحويل الصورة إليه:**",
         "choose_prompt_lang": "🌐 **الخطوة 1/3:** اختر لغة البرومبت المطلوب:",
         "choose_detail": "⚙️ **الخطوة 2/3:** اختر مستوى تفصيل البرومبت:",
         "choose_ratio": "📐 **الخطوة 3/3:** اختر مقاس/نسبة أبعاد الصورة:",
@@ -194,12 +201,10 @@ TEXTS = {
         "btn_cancel": "❌ إلغاء",
         "cancelled": "🚫 تم إلغاء العملية الحالية. أرسل صورة جديدة في أي وقت.",
         "session_expired": "⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة من جديد.",
-        "analyzing": "⏳ جاري تحليل عناصر الصورة واستخراج البرومبت...",
-        "enhancing": "⚡ جاري معالجة وتكبير أبعاد الصورة وإبراز حدتها محلياً...",
-        "converting_style": "🎨 جاري تحويل نمط الصورة بالذكاء الاصطناعي...",
+        "analyzing": "جاري تحليل عناصر الصورة واستخراج البرومبت...",
+        "enhancing": "جاري رفع دقة الصورة وتحسين تفاصيلها بقوة مضاعفة محلياً...",
         "success_title": "✅ **تم استخراج البرومبت بنجاح!**\n*(اضغط على النص أدناه لنسخه فوراً)*\n\n",
-        "success_enhance": "✨ **تم رفع دقة الصورة وتحسين وضوح التفاصيل بنجاح!**",
-        "success_style": "🎨 **تم تحويل نمط الصورة بنجاح!** (بدون أي علامة مائية)",
+        "success_enhance": "✨ **تم رفع دقة الصورة وتحسين وضوح التفاصيل بقوة مضاعفة بنجاح!**",
         "btn_retry": "🔄 استخراج بمستوى/لغة أخرى",
         "btn_new_photo": "📸 أرسل صورة جديدة",
         "error_generation": "❌ حدث خطأ أثناء المعالجة: ",
@@ -210,8 +215,6 @@ TEXTS = {
         "choose_main_mode": "🎯 **Choose the service for your image:**",
         "btn_extract_prompt": "📝 Extract Prompt",
         "btn_upscale_image": "🚀 Ultra HD Upscale (Free)",
-        "btn_style_convert": "🎨 Convert Image Style",
-        "choose_style": "🎨 **Choose the art style to convert your image to:**",
         "choose_prompt_lang": "🌐 **Step 1/3:** Choose prompt language:",
         "choose_detail": "⚙️ **Step 2/3:** Choose detail level:",
         "choose_ratio": "📐 **Step 3/3:** Choose aspect ratio:",
@@ -226,12 +229,10 @@ TEXTS = {
         "btn_cancel": "❌ Cancel",
         "cancelled": "🚫 Operation cancelled. Send a new image anytime.",
         "session_expired": "⚠️ Session expired. Please resend the image.",
-        "analyzing": "⏳ Analyzing image and extracting prompt...",
-        "enhancing": "⚡ Processing image sharpness and resolution...",
-        "converting_style": "🎨 Converting image style with AI...",
+        "analyzing": "Analyzing image and extracting prompt...",
+        "enhancing": "Boosting image resolution and sharpening details at maximum strength...",
         "success_title": "✅ **Prompt extracted successfully!**\n*(Tap below to copy)*\n\n",
-        "success_enhance": "✨ **Image scaled up & details enhanced successfully!**",
-        "success_style": "🎨 **Image style converted successfully!** (No watermark added)",
+        "success_enhance": "✨ **Image scaled up & details enhanced at maximum strength!**",
         "btn_retry": "🔄 Extract with other options",
         "btn_new_photo": "📸 Send a new image",
         "error_generation": "❌ An error occurred: ",
@@ -243,6 +244,23 @@ TEXTS = {
 def t(context: ContextTypes.DEFAULT_TYPE, key: str) -> str:
     ui_lang = context.user_data.get("ui_lang", "ar")
     return TEXTS[ui_lang][key]
+
+async def animate_loading(query, context: ContextTypes.DEFAULT_TYPE, text_key: str, interval: float = 0.6):
+    """يعرض ساعة متحركة (تدور بدل عقارب الساعة) كمؤشر انتظار مميز أثناء المعالجة،
+    بدلاً من رمز الساعة الرملية الثابت ⏳."""
+    base_text = t(context, text_key)
+    idx = 0
+    try:
+        while True:
+            frame = CLOCK_FRAMES[idx % len(CLOCK_FRAMES)]
+            try:
+                await query.edit_message_text(f"{frame} {base_text}")
+            except Exception:
+                pass
+            idx += 1
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        pass
 
 def compute_image_ratio(photo_bytes) -> str:
     try:
@@ -294,7 +312,6 @@ async def show_main_mode_menu(context, send_func):
     keyboard = [
         [InlineKeyboardButton(t(context, "btn_extract_prompt"), callback_data="mode_prompt")],
         [InlineKeyboardButton(t(context, "btn_upscale_image"), callback_data="mode_upscale")],
-        [InlineKeyboardButton(t(context, "btn_style_convert"), callback_data="mode_style")],
         [InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -328,27 +345,6 @@ async def show_detail_menu(context, query):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(t(context, "choose_detail"), reply_markup=reply_markup, parse_mode="Markdown")
-
-
-async def show_style_menu(context, query):
-    ui_lang = context.user_data.get("ui_lang", "ar")
-    label_index = 1 if ui_lang == "ar" else 2
-
-    rows = []
-    for i in range(0, len(STYLE_PRESETS), 2):
-        pair = STYLE_PRESETS[i:i + 2]
-        rows.append([
-            InlineKeyboardButton(preset[label_index], callback_data=f"style_{preset[0]}")
-            for preset in pair
-        ])
-
-    rows.append([
-        InlineKeyboardButton(t(context, "btn_back"), callback_data="back_to_main_mode"),
-        InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel"),
-    ])
-
-    reply_markup = InlineKeyboardMarkup(rows)
-    await query.edit_message_text(t(context, "choose_style"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await notify_channel(update.effective_user, "قام بتشغيل البوت (/start)", context)
@@ -392,12 +388,18 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         await query.edit_message_text(t(context, "session_expired"))
         return
 
-    await query.edit_message_text(t(context, "enhancing"))
+    loading_task = asyncio.create_task(animate_loading(query, context, "enhancing"))
 
     try:
         loop = asyncio.get_running_loop()
         enhanced_stream = await loop.run_in_executor(None, local_upscale_image, photo_bytes)
-        
+
+        loading_task.cancel()
+        try:
+            await loading_task
+        except asyncio.CancelledError:
+            pass
+
         post_action_keyboard = [
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
         ]
@@ -417,147 +419,13 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         await notify_channel(user, "قام بزيادة دقة صورة (HD Upscale) 🚀", context)
 
     except Exception as e:
+        loading_task.cancel()
+        try:
+            await loading_task
+        except asyncio.CancelledError:
+            pass
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
-
-def _style_cartoon_edges(img_bgr, sigma_color=200, sigma_space=200, block_size=9, c_val=9, blur_ksize=5, sat_boost=1.0):
-    """أساس مشترك لأنماط الكرتون/الأنمي: تنعيم الألوان + رسم الحواف السوداء فوقها."""
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    gray_blur = cv2.medianBlur(gray, blur_ksize)
-    edges = cv2.adaptiveThreshold(
-        gray_blur, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, block_size, c_val
-    )
-    color = img_bgr
-    for _ in range(2):
-        color = cv2.bilateralFilter(color, d=9, sigmaColor=sigma_color, sigmaSpace=sigma_space)
-    edges_colored = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
-    cartoon = cv2.bitwise_and(color, edges_colored)
-    if sat_boost != 1.0:
-        hsv = cv2.cvtColor(cartoon, cv2.COLOR_BGR2HSV).astype(np.float32)
-        hsv[..., 1] = np.clip(hsv[..., 1] * sat_boost, 0, 255)
-        cartoon = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-    return cartoon
-
-def _style_anime(img_bgr):
-    return _style_cartoon_edges(img_bgr, block_size=7, c_val=5, sat_boost=1.3)
-
-def _style_bold_cartoon(img_bgr):
-    return _style_cartoon_edges(img_bgr, block_size=11, c_val=8, sat_boost=1.15)
-
-def _style_watercolor(img_bgr):
-    return cv2.stylization(img_bgr, sigma_s=60, sigma_r=0.45)
-
-def _style_oil_painting(img_bgr):
-    try:
-        # يتطلب حزمة opencv-contrib-python-headless (وحدة xphoto)
-        return cv2.xphoto.oilPainting(img_bgr, 7, 1)
-    except Exception:
-        # احتياطي في حال عدم توفر وحدة xphoto: تقريب لتأثير الرسم الزيتي
-        smooth = cv2.edgePreservingFilter(img_bgr, flags=cv2.RECURS_FILTER, sigma_s=60, sigma_r=0.4)
-        return cv2.stylization(smooth, sigma_s=60, sigma_r=0.6)
-
-def _style_impressionist(img_bgr):
-    base = _style_oil_painting(img_bgr)
-    hsv = cv2.cvtColor(base, cv2.COLOR_BGR2HSV).astype(np.float32)
-    hsv[..., 1] = np.clip(hsv[..., 1] * 1.35, 0, 255)
-    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-
-def _style_pencil_sketch(img_bgr):
-    gray_sketch, _color_sketch = cv2.pencilSketch(img_bgr, sigma_s=60, sigma_r=0.07, shade_factor=0.05)
-    return cv2.cvtColor(gray_sketch, cv2.COLOR_GRAY2BGR)
-
-def _style_cyberpunk(img_bgr):
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
-    hsv[..., 1] = np.clip(hsv[..., 1] * 1.6, 0, 255)
-    boosted = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
-    b, g, r = cv2.split(boosted)
-    b = np.clip(b * 1.35, 0, 255)
-    r = np.clip(r * 1.15, 0, 255)
-    g = np.clip(g * 0.9, 0, 255)
-    neon = cv2.merge([b, g, r]).astype(np.uint8)
-    glow = cv2.GaussianBlur(neon, (0, 0), sigmaX=8)
-    return cv2.addWeighted(neon, 0.75, glow, 0.35, 0)
-
-def _style_pixel_art(img_bgr, pixel_size=14):
-    h, w = img_bgr.shape[:2]
-    small_w, small_h = max(1, w // pixel_size), max(1, h // pixel_size)
-    small = cv2.resize(img_bgr, (small_w, small_h), interpolation=cv2.INTER_LINEAR)
-    return cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
-
-# ربط كل مفتاح نمط بدالة المعالجة المحلية الخاصة به
-STYLE_FILTERS = {
-    "anime": _style_anime,
-    "watercolor": _style_watercolor,
-    "oil_painting": _style_oil_painting,
-    "cyberpunk": _style_cyberpunk,
-    "sketch": _style_pencil_sketch,
-    "cartoon_3d": _style_bold_cartoon,
-    "vintage": _style_impressionist,
-    "pixel_art": _style_pixel_art,
-}
-
-def local_convert_image_style(photo_bytes: bytearray, style_key: str) -> io.BytesIO:
-    """يحوّل نمط الصورة محلياً بالكامل عبر OpenCV/PIL، بدون أي اتصال بأي API خارجي —
-    مجاني بالكامل وفوري ولا يحتاج أي مفتاح أو رصيد."""
-    filter_func = STYLE_FILTERS.get(style_key)
-    if filter_func is None:
-        raise ValueError(f"نمط غير معروف: {style_key}")
-
-    image_np = np.frombuffer(photo_bytes, np.uint8)
-    img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
-
-    result_bgr = filter_func(img)
-
-    pil_img = Image.fromarray(cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB))
-    output_stream = io.BytesIO()
-    pil_img.save(output_stream, format="PNG")
-    output_stream.seek(0)
-    return output_stream
-
-async def process_style_conversion(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user, style_key):
-    photo_bytes = context.user_data.get("photo_bytes")
-    photo_message_id = context.user_data.get("photo_message_id")
-
-    if not photo_bytes:
-        await query.edit_message_text(t(context, "session_expired"))
-        return
-
-    preset = next((p for p in STYLE_PRESETS if p[0] == style_key), None)
-    if not preset:
-        await query.edit_message_text(t(context, "session_expired"))
-        return
-
-    await query.edit_message_text(t(context, "converting_style"))
-
-    try:
-        loop = asyncio.get_running_loop()
-        result_stream = await loop.run_in_executor(None, local_convert_image_style, photo_bytes, style_key)
-
-        post_action_keyboard = [
-            [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
-        ]
-        reply_markup = InlineKeyboardMarkup(post_action_keyboard)
-
-        await context.bot.send_document(
-            chat_id=chat_id,
-            document=result_stream,
-            filename="styled_image.png",
-            caption=t(context, "success_style"),
-            parse_mode="Markdown",
-            reply_markup=reply_markup,
-            reply_to_message_id=photo_message_id,
-        )
-        await query.delete_message()
-
-        await notify_channel(user, "قام بتحويل نمط صورة 🎨", context)
-
-    except Exception as e:
-        logging.error(f"خطأ أثناء تحويل نمط الصورة: {e}")
-        err_str = str(e)
-        if "429" in err_str or "quota" in err_str.lower():
-            await query.message.reply_text(t(context, "quota_error"))
-        else:
-            await query.message.reply_text(t(context, "error_generation") + err_str)
 
 def _run_genai(instruction, image, models_order=None, generation_config=None):
     """الدالة الداخلية للتنقل بين المفاتيح والنماذج بأسلوب متزامن متوافق مع run_in_executor"""
@@ -634,7 +502,7 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         await query.edit_message_text(t(context, "session_expired"))
         return
 
-    await query.edit_message_text(t(context, "analyzing"))
+    loading_task = asyncio.create_task(animate_loading(query, context, "analyzing"))
 
     output_rules_ar = (
         "مهم جداً: أعطني البرومبت فقط، كفقرة نصية واحدة متصلة تبدأ مباشرة بوصف الصورة، "
@@ -721,6 +589,11 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
             instruction, image, models_order=models_order, generation_config=generation_config
         )
     except Exception as e:
+        loading_task.cancel()
+        try:
+            await loading_task
+        except asyncio.CancelledError:
+            pass
         logging.error(f"فشل التوليد عبر كل المفاتيح: {e}")
         err_str = str(e)
         if "429" in err_str or "quota" in err_str.lower():
@@ -728,6 +601,12 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         else:
             await query.message.reply_text(t(context, "error_generation") + err_str)
         return
+
+    loading_task.cancel()
+    try:
+        await loading_task
+    except asyncio.CancelledError:
+        pass
 
     try:
         generated_prompt = clean_generated_prompt(generated_prompt)
@@ -778,15 +657,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "mode_upscale":
         await process_upscale(query, context, update.effective_chat.id, update.effective_user)
-        return
-
-    if data == "mode_style":
-        await show_style_menu(context, query)
-        return
-
-    if data.startswith("style_"):
-        style_key = data[len("style_"):]
-        await process_style_conversion(query, context, update.effective_chat.id, update.effective_user, style_key)
         return
 
     if data == "back_to_main_mode":
