@@ -35,12 +35,12 @@ API_KEYS = [key.strip() for key in raw_keys.split(",") if key.strip()]
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
-# ملاحظة: تمت إزالة gemini-1.5-flash لأن جوجل أوقفته للمشاريع الجديدة
-# منذ أبريل 2025 (يرجع دائماً 404 not found على v1beta).
+# ملاحظة: نماذج 1.5 و2.0 متوقفة تماماً، ونماذج 2.5 صارت غير متاحة
+# للمشاريع/المفاتيح الجديدة (رسالة "no longer available to new users").
+# لذلك نستخدم جيل Gemini 3.x المستقر (GA) حالياً.
 AVAILABLE_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash-lite",
 ]
 
 GENERATION_CONFIG = {
