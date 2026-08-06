@@ -19,8 +19,11 @@ logging.basicConfig(
 )
 
 # مفاتيح التشغيل (استبدلها بمفاتيحك أو استدعيها من متغيرات البيئة)
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY"
+import os
+
+# قراءة المفاتيح من متغيرات البيئة بدلاً من كتابتها نصياً
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # إعداد نموذج Gemini
 genai.configure(api_key=GEMINI_API_KEY)
