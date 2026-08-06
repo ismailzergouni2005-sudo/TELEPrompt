@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import math
 import logging
 import threading
@@ -299,34 +300,6 @@ async def show_detail_menu(context, query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(t(context, "choose_detail"), reply_markup=reply_markup, parse_mode="Markdown")
 
-async def show_ratio_menu(context, query):
-    keyboard = [
-        [InlineKeyboardButton(t(context, "btn_ratio_same"), callback_data="ratio_same")],
-        [InlineKeyboardButton(t(context, "btn_ratio_standard"), callback_data="ratio_menu")],
-        [
-            InlineKeyboardButton(t(context, "btn_back_detail"), callback_data="back_to_detail"),
-            InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel"),
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(t(context, "choose_ratio"), reply_markup=reply_markup, parse_mode="Markdown")
-
-async def show_standard_ratio_menu(context, query):
-    rows = []
-    row = []
-    for value, label in STANDARD_RATIOS:
-        row.append(InlineKeyboardButton(label, callback_data=f"ratio_std_{value}"))
-        if len(row) == 2:
-            rows.append(row)
-            row = []
-    if row:
-        rows.append(row)
-    rows.append([
-        InlineKeyboardButton(t(context, "btn_back"), callback_data="ratio_back"),
-        InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel"),
-    ])
-    reply_markup = InlineKeyboardMarkup(rows)
-    await query.edit_message_text(t(context, "choose_standard_ratio"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await notify_channel(update.effective_user, "قام بتشغيل البوت (/start)", context)
@@ -428,6 +401,36 @@ async def generate_prompt_with_fallback(instruction, image, models_order=None, g
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run_genai, instruction, image, models_order, generation_config)
 
+def clean_generated_prompt(text: str) -> str:
+    """شبكة أمان: تزيل أي عناوين/تحليل/تنسيق Markdown قد يفلت من النموذج
+    رغم التعليمات، وتُبقي فقرة البرومبت النهائية فقط."""
+    if not text:
+        return text
+
+    lines = text.strip().splitlines()
+    kept = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # تجاهل عناوين Markdown أو خطوط فاصلة أو نقاط ترقيم أو أسطر تشير لـ "التحليل/البرومبت"
+        if stripped.startswith("#") or stripped.startswith("---") or stripped.startswith("==="):
+            continue
+        if re.match(r"^(\*|-|\d+[\.\)])\s+", stripped) and len(stripped) < 60:
+            continue
+        if re.match(r"^(البرومبت|Prompt|تحليل|Analysis)\s*[:：]?\s*$", stripped, re.IGNORECASE):
+            continue
+        kept.append(stripped)
+
+    result = " ".join(kept) if kept else text.strip()
+
+    # إزالة تنسيق Markdown الشائع (عريض/مائل/اقتباس)
+    result = re.sub(r"\*\*(.*?)\*\*", r"\1", result)
+    result = re.sub(r"\*(.*?)\*", r"\1", result)
+    result = result.strip("`>* \n")
+
+    return result.strip()
+
 async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     selected_lang = context.user_data.get("selected_lang", "en")
     selected_length = context.user_data.get("selected_length", "medium")
@@ -441,26 +444,37 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
 
     await query.edit_message_text(t(context, "analyzing"))
 
+    output_rules_ar = (
+        "مهم جداً: أعطني البرومبت فقط، كفقرة نصية واحدة متصلة تبدأ مباشرة بوصف الصورة، "
+        "بدون أي مقدمات أو عناوين أو تحليل منفصل أو نقاط مرقمة أو عناصر Markdown (لا تستخدم ** ولا # ولا -)، "
+        "وبدون أي كلام جانبي قبل أو بعد الوصف."
+    )
+    output_rules_en = (
+        "Important: give me only the prompt itself, as a single continuous paragraph starting directly "
+        "with the image description — no preamble, no headings, no separate analysis, no numbered lists, "
+        "no Markdown formatting (no **, no #, no -), and no extra commentary before or after."
+    )
+
     system_instructions = {
-        ("ar", "short"): "اكتب برومبت قصير وموجز (25-40 كلمة تقريباً) لوصف هذه الصورة لاستخدامه في الذكاء الاصطناعي.",
-        ("ar", "medium"): "اكتب برومبت متوسط الطول وشامل (60-100 كلمة تقريباً) لوصف هذه الصورة لاستخدامه في توليد الصور، مع ذكر الموضوع الرئيسي والإضاءة والأسلوب العام.",
+        ("ar", "short"): f"اكتب برومبت قصير وموجز (25-40 كلمة تقريباً) لوصف هذه الصورة لاستخدامه في الذكاء الاصطناعي. {output_rules_ar}",
+        ("ar", "medium"): f"اكتب برومبت متوسط الطول وشامل (60-100 كلمة تقريباً) لوصف هذه الصورة لاستخدامه في توليد الصور، مع ذكر الموضوع الرئيسي والإضاءة والأسلوب العام. {output_rules_ar}",
         ("ar", "detailed"): (
-            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، واكتب برومبت تفصيلي جداً "
-            "لا يقل عن 150-200 كلمة، بحيث يغطي بشكل صريح كل ما يلي: الموضوع الرئيسي وتفاصيله الدقيقة، "
+            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، ثم حوّل هذا التحليل إلى برومبت واحد "
+            "تفصيلي جداً لا يقل عن 150-200 كلمة، بحيث يغطي ضمن نفس الفقرة: الموضوع الرئيسي وتفاصيله الدقيقة، "
             "نوع اللقطة وزاوية الكاميرا، الإضاءة ومصدرها ولونها، الألوان السائدة والتباين، "
             "الملمس والتفاصيل الدقيقة، الخلفية والعناصر المحيطة، الجو العام والمزاج، "
             "والأسلوب الفني أو نوع التصوير (سينمائي، واقعي، لوحة رقمية...الخ). "
-            "لا تختصر ولا تلخص، اكتب وصفاً غنياً ومترابطاً."
+            f"{output_rules_ar}"
         ),
-        ("en", "short"): "Write a short and concise image generation prompt (about 25-40 words) describing this image.",
-        ("en", "medium"): "Write a medium-length, well-rounded image generation prompt (about 60-100 words) describing this image, covering the main subject, lighting, and overall style.",
+        ("en", "short"): f"Write a short and concise image generation prompt (about 25-40 words) describing this image. {output_rules_en}",
+        ("en", "medium"): f"Write a medium-length, well-rounded image generation prompt (about 60-100 words) describing this image, covering the main subject, lighting, and overall style. {output_rules_en}",
         ("en", "detailed"): (
-            "Analyze this image with maximum depth and precision, and write an ultra-detailed image "
-            "generation prompt of at least 150-200 words. Explicitly cover: the main subject and its fine "
-            "details, shot type and camera angle, lighting source and color, dominant colors and contrast, "
-            "textures and fine details, background and surrounding elements, overall mood and atmosphere, "
-            "and the artistic or cinematographic style. Do not summarize or shorten — write a rich, "
-            "cohesive, comprehensive description."
+            "Analyze this image with maximum depth and precision, then turn that analysis into a single "
+            "ultra-detailed image generation prompt of at least 150-200 words, covering within the same "
+            "paragraph: the main subject and its fine details, shot type and camera angle, lighting source "
+            "and color, dominant colors and contrast, textures and fine details, background and surrounding "
+            "elements, overall mood and atmosphere, and the artistic or cinematographic style. "
+            f"{output_rules_en}"
         ),
     }
 
@@ -494,6 +508,7 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         return
 
     try:
+        generated_prompt = clean_generated_prompt(generated_prompt)
         if len(generated_prompt) > 3800:
             generated_prompt = generated_prompt[:3800] + "..."
 
@@ -572,10 +587,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await show_detail_menu(context, query)
         return
 
-    if data == "ratio_back":
-        await show_ratio_menu(context, query)
-        return
-
     if data.startswith("lang_"):
         context.user_data["selected_lang"] = data.split("_")[1]
         await show_detail_menu(context, query)
@@ -583,27 +594,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("detail_"):
         context.user_data["selected_length"] = data.split("_")[1]
-        if not context.user_data.get("photo_bytes"):
-            await query.edit_message_text(t(context, "session_expired"))
-            return
-        await show_ratio_menu(context, query)
-        return
-
-    if data == "ratio_menu":
-        await show_standard_ratio_menu(context, query)
-        return
-
-    if data == "ratio_same":
         photo_bytes = context.user_data.get("photo_bytes")
         if not photo_bytes:
             await query.edit_message_text(t(context, "session_expired"))
             return
+        # نأخذ نفس مقاس/نسبة الصورة المرسلة تلقائياً بدون سؤال المستخدم
         context.user_data["selected_ratio"] = compute_image_ratio(photo_bytes)
-        await generate_and_send_prompt(query, context, update.effective_chat.id, update.effective_user)
-        return
-
-    if data.startswith("ratio_std_"):
-        context.user_data["selected_ratio"] = data.replace("ratio_std_", "", 1)
         await generate_and_send_prompt(query, context, update.effective_chat.id, update.effective_user)
         return
 
