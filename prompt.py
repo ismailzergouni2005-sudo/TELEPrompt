@@ -398,19 +398,21 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
-def _run_genai(instruction, image):
+def _run_genai(instruction, image, models_order=None, generation_config=None):
     """الدالة الداخلية للتنقل بين المفاتيح والنماذج بأسلوب متزامن متوافق مع run_in_executor"""
     last_error = None
+    models_to_try = models_order or AVAILABLE_MODELS
+    gen_config = generation_config or GENERATION_CONFIG
 
     if not API_KEYS:
         raise RuntimeError("لا توجد أي مفاتيح API صالحة في متغير API_KEYS.")
 
     for api_key in API_KEYS:
         genai.configure(api_key=api_key)
-        for model_name in AVAILABLE_MODELS:
+        for model_name in models_to_try:
             try:
                 model = genai.GenerativeModel(model_name)
-                response = model.generate_content([instruction, image], generation_config=GENERATION_CONFIG)
+                response = model.generate_content([instruction, image], generation_config=gen_config)
                 if response and response.text:
                     return response.text.strip()
             except Exception as e:
@@ -422,9 +424,9 @@ def _run_genai(instruction, image):
 
     raise last_error or RuntimeError("فشل الاتصال بكل المفاتيح والنماذج.")
 
-async def generate_prompt_with_fallback(instruction, image):
+async def generate_prompt_with_fallback(instruction, image, models_order=None, generation_config=None):
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _run_genai, instruction, image)
+    return await loop.run_in_executor(None, _run_genai, instruction, image, models_order, generation_config)
 
 async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     selected_lang = context.user_data.get("selected_lang", "en")
@@ -440,12 +442,26 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
     await query.edit_message_text(t(context, "analyzing"))
 
     system_instructions = {
-        ("ar", "short"): "اكتب برومبت قصير وموجز لوصف هذه الصورة لاستخدامه في الذكاء الاصطناعي.",
-        ("ar", "medium"): "اكتب برومبت متوسط الطول وشامل لوصف هذه الصورة لاستخدامه في توليد الصور.",
-        ("ar", "detailed"): "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق واكتب برومبت تفصيلي جداً شامل الإضاءة والزوايا والتأثيرات.",
-        ("en", "short"): "Write a short and concise image generation prompt describing this image.",
-        ("en", "medium"): "Write a detailed image generation prompt describing this image.",
-        ("en", "detailed"): "Write an ultra-detailed, highly comprehensive image generation prompt covering subject, lighting, style, background, and camera angle.",
+        ("ar", "short"): "اكتب برومبت قصير وموجز (25-40 كلمة تقريباً) لوصف هذه الصورة لاستخدامه في الذكاء الاصطناعي.",
+        ("ar", "medium"): "اكتب برومبت متوسط الطول وشامل (60-100 كلمة تقريباً) لوصف هذه الصورة لاستخدامه في توليد الصور، مع ذكر الموضوع الرئيسي والإضاءة والأسلوب العام.",
+        ("ar", "detailed"): (
+            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، واكتب برومبت تفصيلي جداً "
+            "لا يقل عن 150-200 كلمة، بحيث يغطي بشكل صريح كل ما يلي: الموضوع الرئيسي وتفاصيله الدقيقة، "
+            "نوع اللقطة وزاوية الكاميرا، الإضاءة ومصدرها ولونها، الألوان السائدة والتباين، "
+            "الملمس والتفاصيل الدقيقة، الخلفية والعناصر المحيطة، الجو العام والمزاج، "
+            "والأسلوب الفني أو نوع التصوير (سينمائي، واقعي، لوحة رقمية...الخ). "
+            "لا تختصر ولا تلخص، اكتب وصفاً غنياً ومترابطاً."
+        ),
+        ("en", "short"): "Write a short and concise image generation prompt (about 25-40 words) describing this image.",
+        ("en", "medium"): "Write a medium-length, well-rounded image generation prompt (about 60-100 words) describing this image, covering the main subject, lighting, and overall style.",
+        ("en", "detailed"): (
+            "Analyze this image with maximum depth and precision, and write an ultra-detailed image "
+            "generation prompt of at least 150-200 words. Explicitly cover: the main subject and its fine "
+            "details, shot type and camera angle, lighting source and color, dominant colors and contrast, "
+            "textures and fine details, background and surrounding elements, overall mood and atmosphere, "
+            "and the artistic or cinematographic style. Do not summarize or shorten — write a rich, "
+            "cohesive, comprehensive description."
+        ),
     }
 
     instruction = system_instructions.get((selected_lang, selected_length), "")
@@ -454,9 +470,20 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         instruction += f"\nInclude aspect ratio: --ar {selected_ratio}"
 
     image = Image.open(io.BytesIO(photo_bytes))
-    
+
+    # للمستوى التفصيلي: نبدأ بالنموذج الأقوى (gemini-3.6-flash) بدل الأخف (flash-lite)،
+    # ونرفع سقف عدد الكلمات المسموح به حتى لا يُقطع الرد قبل اكتماله.
+    if selected_length == "detailed":
+        models_order = ["gemini-3.6-flash"] + [m for m in AVAILABLE_MODELS if m != "gemini-3.6-flash"]
+        generation_config = {**GENERATION_CONFIG, "max_output_tokens": 2500, "temperature": 0.9}
+    else:
+        models_order = None
+        generation_config = None
+
     try:
-        generated_prompt = await generate_prompt_with_fallback(instruction, image)
+        generated_prompt = await generate_prompt_with_fallback(
+            instruction, image, models_order=models_order, generation_config=generation_config
+        )
     except Exception as e:
         logging.error(f"فشل التوليد عبر كل المفاتيح: {e}")
         err_str = str(e)
