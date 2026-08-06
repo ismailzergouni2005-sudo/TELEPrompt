@@ -60,6 +60,35 @@ def run_dummy_server():
     server = HTTPServer(("0.0.0.0", port), Handler)
     server.serve_forever()
 
+async def notify_admin(user, action: str, context: ContextTypes.DEFAULT_TYPE):
+    """دالة لإرسال بيانات المستخدم إلى الأدمن"""
+    if not ADMIN_ID:
+        return
+
+    username = f"@{user.username}" if user.username else "لا يوجد"
+    first_name = user.first_name or "غير معروف"
+    last_name = user.last_name or ""
+    full_name = f"{first_name} {last_name}".strip()
+    
+    admin_message = (
+        "👤 **إشعار مستخدم جديد / نشاط:**\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        f"🔹 **الحدث:** {action}\n"
+        f"🔹 **الاسم:** {full_name}\n"
+        f"🔹 **اليوزر:** {username}\n"
+        f"🔹 **المعرف (ID):** `{user.id}`\n"
+        f"🔹 **رابط الحساب:** [{first_name}](tg://user?id={user.id})\n"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=int(ADMIN_ID),
+            text=admin_message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logging.warning(f"تعذر إرسال بيانات المستخدم للأدمن: {e}")
+
 def get_welcome_text(user, ui_lang="ar"):
     user_mention = f"[{user.first_name}](tg://user?id={user.id})"
     
@@ -237,6 +266,9 @@ async def show_standard_ratio_menu(context, query):
     await query.edit_message_text(t(context, "choose_standard_ratio"), reply_markup=reply_markup, parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # إرسال إشعار للأدمن بدخول مستخدم جديد
+    await notify_admin(update.effective_user, "دخول البوت /start", context)
+
     if "ui_lang" not in context.user_data:
         await show_ui_language_menu(update.message.reply_text)
         return
@@ -295,7 +327,6 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
 
     image = Image.open(io.BytesIO(photo_bytes))
     
-    # محاولة التوليد مع إمكانية إعادة المحاولة عند حدوث أخطاء خادم 500
     max_retries = 3
     response = None
     last_error = None
