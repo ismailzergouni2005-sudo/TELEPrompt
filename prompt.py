@@ -1,6 +1,8 @@
 import os
 import io
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from google import generativeai as genai
 from PIL import Image
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -28,6 +30,26 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel("gemini-2.5-flash")
 
+
+# ==========================================================
+# خادم HTTP وهمي لإرضاء فحص المنفذ في Render (Web Service)
+# ==========================================================
+def run_dummy_server():
+    port = int(os.getenv("PORT", 10000))
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot is running")
+
+        def log_message(self, format, *args):
+            pass  # لإسكات سجلات الخادم الوهمي
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    server.serve_forever()
+
+
 # رسالة البدء
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
@@ -35,6 +57,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "أرسل لي أي صورة الآن، وسأقوم بتحليلها واستخراج برومبت دقيق جداً ومفصل يمكنك نسخه بضغطة واحدة."
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
+
 
 # استقبال الصورة وعرض قائمة اختيار اللغة أولاً
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -44,6 +67,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["photo_bytes"] = photo_bytes
 
     await show_language_menu(update.message.reply_text)
+
 
 # عرض قائمة اختيار اللغة مع أعلام الجزائر وإنجلترا
 async def show_language_menu(send_func):
@@ -58,6 +82,7 @@ async def show_language_menu(send_func):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await send_func("🌐 **الخطوة 1/2:** اختر لغة البرومبت المطلوب:", reply_markup=reply_markup, parse_mode="Markdown")
+
 
 # عرض قائمة اختيار مستوى التفاصيل
 async def show_detail_menu(query):
@@ -76,6 +101,7 @@ async def show_detail_menu(query):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text("⚙️ **الخطوة 2/2:** اختر مستوى تفصيل البرومبت:", reply_markup=reply_markup, parse_mode="Markdown")
+
 
 # معالجة تفاعلات الأزرار
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -164,8 +190,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"خطأ أثناء التوليد: {e}")
             await query.message.reply_text(f"❌ حدث خطأ أثناء تحليل الصورة: {str(e)}")
 
+
 # تشغيل البوت
 def main():
+    # تشغيل خادم وهمي في thread منفصل لإرضاء فحص المنفذ في Render (Web Service)
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     request = HTTPXRequest(
         connect_timeout=30.0,
         read_timeout=30.0,
@@ -181,6 +211,7 @@ def main():
 
     print("🤖 البوت يعمل الآن بنجاح...")
     app.run_polling()
+
 
 if __name__ == "__main__":
     main()
