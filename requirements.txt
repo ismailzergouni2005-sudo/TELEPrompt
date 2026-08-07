@@ -8,3 +8,4 @@ numpy
 rembg
 onnxruntime
 opencv-contrib-python-headless
+scikit-image
