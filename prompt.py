@@ -31,25 +31,18 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 ADMIN_ID = os.getenv("ADMIN_ID")
 CHANNEL_ID = os.getenv("CHANNEL_ID")
 
-# رابط الخدمة نفسها لاستخدامه في الـ self-ping (Render يضبط RENDER_EXTERNAL_URL
-# تلقائياً؛ ويمكن أيضاً ضبط SELF_URL يدوياً كخيار احتياطي)
 SELF_URL = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("SELF_URL", "")
-# كل كم ثانية يتم عمل ping ذاتي (افتراضياً كل 10 دقائق، أقل من مهلة نوم Render وهي 15 دقيقة)
 KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
 
-# قراءة مفاتيح API من بيئة Render بأمان (تفصل بين المفاتيح الفاصلة ",")
 raw_keys = os.getenv("API_KEYS", "")
 API_KEYS = [key.strip() for key in raw_keys.split(",") if key.strip()]
 
 WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
-# ملاحظة: نماذج 1.5 و2.0 متوقفة تماماً، ونماذج 2.5 صارت غير متاحة
-# للمشاريع/المفاتيح الجديدة (رسالة "no longer available to new users").
-# لذلك نستخدم جيل Gemini 3.x المستقر (GA) حالياً.
 AVAILABLE_MODELS = [
-    "gemini-3.6-flash",
-    "gemini-3.5-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
 ]
 
 GENERATION_CONFIG = {
@@ -58,16 +51,6 @@ GENERATION_CONFIG = {
     "top_p": 0.9,
 }
 
-STANDARD_RATIOS = [
-    ("1:1", "1:1  (مربع / Square)"),
-    ("16:9", "16:9  (عريض / Widescreen)"),
-    ("9:16", "9:16  (عمودي / Portrait)"),
-    ("4:3", "4:3  (كلاسيكي / Classic)"),
-    ("3:4", "3:4  (عمودي كلاسيكي)"),
-    ("21:9", "21:9  (سينمائي / Cinematic)"),
-]
-
-# رموز الساعة المتحركة المستخدمة كمؤشر انتظار بدل الساعة الرملية الثابتة ⏳
 CLOCK_FRAMES = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"]
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
@@ -87,29 +70,20 @@ def start_health_server():
         logging.info(f"✅ Health check server listening on 0.0.0.0:{port}")
         server.serve_forever()
     except Exception as e:
-        logging.error(f"❌ فشل تشغيل خادم فحص الصحة على البورت {port}: {e}")
+        logging.error(f"❌ فشل تشغيل خادم فحص الصحة: {e}")
 
 def keep_alive_ping():
-    """يرسل طلب HTTP دوري لرابط الخدمة نفسها (self-ping) كل KEEP_ALIVE_INTERVAL
-    ثانية، لمنع Render (في الخطة المجانية) من تعليق الخدمة (Sleep) بسبب الخمول —
-    بدون الحاجة للاعتماد فقط على خدمة خارجية مثل UptimeRobot."""
     if not SELF_URL:
-        logging.warning(
-            "⚠️ لم يتم العثور على رابط الخدمة (RENDER_EXTERNAL_URL/SELF_URL)؛ "
-            "تم تعطيل خاصية إبقاء الخدمة نشطة ذاتياً (self-ping)."
-        )
         return
 
     ping_url = SELF_URL.rstrip("/") + "/"
-    logging.info(f"🔁 تفعيل self-ping كل {KEEP_ALIVE_INTERVAL} ثانية على: {ping_url}")
-
     while True:
         time.sleep(KEEP_ALIVE_INTERVAL)
         try:
             with urllib.request.urlopen(ping_url, timeout=15) as response:
-                logging.info(f"✅ Self-ping ناجح ({response.status}) إلى {ping_url}")
+                logging.info(f"✅ Self-ping ناجح ({response.status})")
         except Exception as e:
-            logging.warning(f"⚠️ فشل self-ping إلى {ping_url}: {e}")
+            logging.warning(f"⚠️ فشل self-ping: {e}")
 
 async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     target_id = CHANNEL_ID or ADMIN_ID
@@ -149,8 +123,6 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"تعذر إرسال الإشعار للقناة: {e}")
 
 def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
-    """رفع دقة الصورة محلياً: تكبير حقيقي عالي الجودة + تنظيف خفيف للضوضاء +
-    حدة معتدلة تحافظ على الملامح الأصلية للوجه والتفاصيل دون تشويهها."""
     image_np = np.frombuffer(photo_bytes, np.uint8)
     img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
 
@@ -160,10 +132,8 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
         img, (width * scale_factor, height * scale_factor), interpolation=cv2.INTER_LANCZOS4
     )
 
-    # إزالة ضوضاء خفيفة فقط (قيمة منخفضة) حتى لا تُفقد التفاصيل الدقيقة للوجه
     denoised = cv2.fastNlMeansDenoisingColored(scaled_img, None, 3, 3, 7, 21)
 
-    # تباين تكيفي لطيف جداً على قناة الإضاءة فقط، ممزوج جزئياً مع الأصل لتفادي أي مبالغة
     lab = cv2.cvtColor(denoised, cv2.COLOR_BGR2LAB)
     l_channel, a_channel, b_channel = cv2.split(lab)
     clahe = cv2.createCLAHE(clipLimit=1.2, tileGridSize=(8, 8))
@@ -172,7 +142,6 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     lab_merged = cv2.merge((l_blended, a_channel, b_channel))
     contrast_boosted = cv2.cvtColor(lab_merged, cv2.COLOR_LAB2BGR)
 
-    # حدة معتدلة عبر Unsharp Masking لإبراز الحواف دون خلق هالات أو مظهر مصطنع
     gaussian = cv2.GaussianBlur(contrast_boosted, (0, 0), sigmaX=2)
     sharpened = cv2.addWeighted(contrast_boosted, 1.25, gaussian, -0.25, 0)
 
@@ -188,7 +157,6 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
 
 def get_welcome_text(user, ui_lang="ar"):
     user_mention = f"[{user.first_name}](tg://user?id={user.id})"
-    
     if ui_lang == "ar":
         return (
             f"✨ أهلاً بك يا {user_mention} في **بوت استخراج البرومبت وتحسين الصور**! ✨\n"
@@ -215,56 +183,46 @@ TEXTS = {
         "choose_main_mode": "🎯 **اختر الخدمة المطلوبة للصورة:**",
         "btn_extract_prompt": "📝 استخراج البرومبت (Prompt)",
         "btn_upscale_image": "🚀 تحسين الجودة والحدة (Free HD Upscale)",
-        "choose_prompt_lang": "🌐 **الخطوة 1/3:** اختر لغة البرومبت المطلوب:",
-        "choose_detail": "⚙️ **الخطوة 2/3:** اختر مستوى تفصيل البرومبت:",
-        "choose_ratio": "📐 **الخطوة 3/3:** اختر مقاس/نسبة أبعاد الصورة:",
-        "choose_standard_ratio": "📐 اختر النسبة القياسية المطلوبة:",
+        "choose_prompt_lang": "🌐 **الخطوة 1/2:** اختر لغة البرومبت المطلوب:",
+        "choose_detail": "⚙️ **الخطوة 2/2:** اختر مستوى تفصيل البرومبت:",
         "btn_short": "⚡ قصير وموجز",
         "btn_medium": "⚖️ متوسط",
-        "btn_detailed": "🔍 تفصيلي وفائق الدقة (شامل جداً)",
-        "btn_ratio_same": "🖼️ نفس مقاس الصورة المرسلة",
-        "btn_ratio_standard": "📏 مقاس عام (اختيار نسبة قياسية)",
+        "btn_detailed": "🔍 تفصيلي وفائق الدقة",
         "btn_back": "🔙 رجوع",
-        "btn_back_detail": "🔙 رجوع لمستوى التفصيل",
         "btn_cancel": "❌ إلغاء",
-        "cancelled": "🚫 تم إلغاء العملية الحالية. أرسل صورة جديدة في أي وقت.",
-        "session_expired": "⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة من جديد.",
+        "cancelled": "🚫 تم إلغاء العملية. أرسل صورة جديدة في أي وقت.",
+        "session_expired": "⚠️ انتهت الجلسة. يرجى إعادة إرسال الصورة.",
         "analyzing": "جاري تحليل عناصر الصورة واستخراج البرومبت...",
-        "enhancing": "جاري رفع دقة الصورة وتحسين تفاصيلها بقوة مضاعفة محلياً...",
-        "success_title": "✅ **تم استخراج البرومبت بنجاح!**\n*(اضغط على النص أدناه لنسخه فوراً)*\n\n",
-        "success_enhance": "✨ **تم رفع دقة الصورة وتحسين وضوح التفاصيل بقوة مضاعفة بنجاح!**",
+        "enhancing": "جاري رفع دقة الصورة وتحسين تفاصيلها...",
+        "success_title": "✅ **تم استخراج البرومبت بنجاح!**\n*(اضغط على النص أدناه لنسخه)*\n\n",
+        "success_enhance": "✨ **تم رفع دقة الصورة وتحسين التفاصيل بنجاح!**",
         "btn_retry": "🔄 استخراج بمستوى/لغة أخرى",
         "btn_new_photo": "📸 أرسل صورة جديدة",
         "error_generation": "❌ حدث خطأ أثناء المعالجة: ",
-        "quota_error": "⚠️ تم تجاوز كافة حدود الطلبات المتاحة حالياً. يرجى المحاولة لاحقاً.",
-        "ready_for_new": "📸 مرحباً بك مجدداً! يمكنك إرسال صورة جديدة الآن.",
+        "quota_error": "⚠️ تم تجاوز كافة حدود الطلبات المتاحة حالياً.",
+        "ready_for_new": "📸 مرحباً بك! يمكنك إرسال صورة جديدة الآن.",
     },
     "en": {
         "choose_main_mode": "🎯 **Choose the service for your image:**",
         "btn_extract_prompt": "📝 Extract Prompt",
         "btn_upscale_image": "🚀 Ultra HD Upscale (Free)",
-        "choose_prompt_lang": "🌐 **Step 1/3:** Choose prompt language:",
-        "choose_detail": "⚙️ **Step 2/3:** Choose detail level:",
-        "choose_ratio": "📐 **Step 3/3:** Choose aspect ratio:",
-        "choose_standard_ratio": "📐 Choose standard aspect ratio:",
+        "choose_prompt_lang": "🌐 **Step 1/2:** Choose prompt language:",
+        "choose_detail": "⚙️ **Step 2/2:** Choose detail level:",
         "btn_short": "⚡ Short & Concise",
         "btn_medium": "⚖️ Medium",
         "btn_detailed": "🔍 Detailed & Ultra-Precise",
-        "btn_ratio_same": "🖼️ Same as sent image",
-        "btn_ratio_standard": "📏 Standard ratio",
         "btn_back": "🔙 Back",
-        "btn_back_detail": "🔙 Back to detail level",
         "btn_cancel": "❌ Cancel",
         "cancelled": "🚫 Operation cancelled. Send a new image anytime.",
         "session_expired": "⚠️ Session expired. Please resend the image.",
         "analyzing": "Analyzing image and extracting prompt...",
-        "enhancing": "Boosting image resolution and sharpening details at maximum strength...",
+        "enhancing": "Boosting image resolution...",
         "success_title": "✅ **Prompt extracted successfully!**\n*(Tap below to copy)*\n\n",
-        "success_enhance": "✨ **Image scaled up & details enhanced at maximum strength!**",
+        "success_enhance": "✨ **Image scaled up & details enhanced!**",
         "btn_retry": "🔄 Extract with other options",
         "btn_new_photo": "📸 Send a new image",
         "error_generation": "❌ An error occurred: ",
-        "quota_error": "⚠️ API limit reached for all available keys. Please wait a moment.",
+        "quota_error": "⚠️ API limit reached for all keys.",
         "ready_for_new": "📸 Ready for a new photo! Send your image.",
     },
 }
@@ -274,8 +232,6 @@ def t(context: ContextTypes.DEFAULT_TYPE, key: str) -> str:
     return TEXTS[ui_lang][key]
 
 async def animate_loading(query, context: ContextTypes.DEFAULT_TYPE, text_key: str, interval: float = 0.6):
-    """يعرض ساعة متحركة (تدور بدل عقارب الساعة) كمؤشر انتظار مميز أثناء المعالجة،
-    بدلاً من رمز الساعة الرملية الثابت ⏳."""
     base_text = t(context, text_key)
     idx = 0
     try:
@@ -296,45 +252,28 @@ def compute_image_ratio(photo_bytes) -> str:
         width, height = image.size
         divisor = math.gcd(width, height) or 1
         return f"{width // divisor}:{height // divisor}"
-    except Exception as e:
-        logging.warning(f"تعذر حساب نسبة أبعاد الصورة: {e}")
+    except Exception:
         return "1:1"
 
 async def send_welcome_payload(chat_id, user, context):
     ui_lang = context.user_data.get("ui_lang", "ar")
     welcome_msg = get_welcome_text(user, ui_lang)
-    
     try:
-        await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=WELCOME_IMAGE_URL,
-            caption=welcome_msg,
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        await context.bot.send_message(
-            chat_id=chat_id, text=welcome_msg, parse_mode="Markdown"
-        )
-        logging.warning(f"تعذر إرسال صورة الترحيب: {e}")
+        await context.bot.send_photo(chat_id=chat_id, photo=WELCOME_IMAGE_URL, caption=welcome_msg, parse_mode="Markdown")
+    except Exception:
+        await context.bot.send_message(chat_id=chat_id, text=welcome_msg, parse_mode="Markdown")
 
     try:
         if WELCOME_STICKER_ID:
             await context.bot.send_sticker(chat_id=chat_id, sticker=WELCOME_STICKER_ID)
-    except Exception as e:
-        logging.warning(f"تعذر إرسال الملصق: {e}")
+    except Exception:
+        pass
 
 async def show_ui_language_menu(send_func):
     keyboard = [
-        [
-            InlineKeyboardButton("🇩🇿 العربية", callback_data="uilang_ar"),
-            InlineKeyboardButton("🇬🇧 English", callback_data="uilang_en"),
-        ],
+        [InlineKeyboardButton("🇩🇿 العربية", callback_data="uilang_ar"), InlineKeyboardButton("🇬🇧 English", callback_data="uilang_en")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await send_func(
-        "🌐 مرحباً! الرجاء اختيار لغة واجهة البوت:\n🌐 Welcome! Please choose the bot's interface language:",
-        reply_markup=reply_markup,
-    )
+    await send_func("🌐 اختر لغة واجهة البوت / Choose language:", reply_markup=InlineKeyboardMarkup(keyboard))
 
 async def show_main_mode_menu(context, send_func):
     keyboard = [
@@ -342,41 +281,25 @@ async def show_main_mode_menu(context, send_func):
         [InlineKeyboardButton(t(context, "btn_upscale_image"), callback_data="mode_upscale")],
         [InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await send_func(t(context, "choose_main_mode"), reply_markup=reply_markup, parse_mode="Markdown")
+    await send_func(t(context, "choose_main_mode"), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def show_prompt_language_menu(context, query):
     keyboard = [
-        [
-            InlineKeyboardButton("🇩🇿 العربية", callback_data="lang_ar"),
-            InlineKeyboardButton("🇬🇧 English", callback_data="lang_en"),
-        ],
-        [
-            InlineKeyboardButton(t(context, "btn_back"), callback_data="back_to_main_mode"),
-            InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")
-        ],
+        [InlineKeyboardButton("🇩🇿 العربية", callback_data="lang_ar"), InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
+        [InlineKeyboardButton(t(context, "btn_back"), callback_data="back_to_main_mode"), InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(t(context, "choose_prompt_lang"), reply_markup=reply_markup, parse_mode="Markdown")
+    await query.edit_message_text(t(context, "choose_prompt_lang"), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def show_detail_menu(context, query):
     keyboard = [
-        [
-            InlineKeyboardButton(t(context, "btn_short"), callback_data="detail_short"),
-            InlineKeyboardButton(t(context, "btn_medium"), callback_data="detail_medium"),
-        ],
+        [InlineKeyboardButton(t(context, "btn_short"), callback_data="detail_short"), InlineKeyboardButton(t(context, "btn_medium"), callback_data="detail_medium")],
         [InlineKeyboardButton(t(context, "btn_detailed"), callback_data="detail_detailed")],
-        [
-            InlineKeyboardButton(t(context, "btn_back"), callback_data="back_to_lang"),
-            InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel"),
-        ],
+        [InlineKeyboardButton(t(context, "btn_back"), callback_data="back_to_lang"), InlineKeyboardButton(t(context, "btn_cancel"), callback_data="cancel")],
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(t(context, "choose_detail"), reply_markup=reply_markup, parse_mode="Markdown")
+    await query.edit_message_text(t(context, "choose_detail"), reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await notify_channel(update.effective_user, "قام بتشغيل البوت (/start)", context)
-
     if "ui_lang" not in context.user_data:
         await show_ui_language_menu(update.message.reply_text)
         return
@@ -392,13 +315,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["photo_message_id"] = update.message.message_id
 
     await notify_channel(update.effective_user, "قام بإرسال صورة جديدة 📸", context)
-
     try:
-        await context.bot.set_message_reaction(
-            chat_id=update.effective_chat.id,
-            message_id=update.message.message_id,
-            reaction=[ReactionTypeEmoji(emoji="❤")],
-        )
+        await context.bot.set_message_reaction(chat_id=update.effective_chat.id, message_id=update.message.message_id, reaction=[ReactionTypeEmoji(emoji="❤")])
     except Exception:
         pass
 
@@ -417,107 +335,62 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
         return
 
     loading_task = asyncio.create_task(animate_loading(query, context, "enhancing"))
-
     try:
         loop = asyncio.get_running_loop()
         enhanced_stream = await loop.run_in_executor(None, local_upscale_image, photo_bytes)
-
         loading_task.cancel()
-        try:
-            await loading_task
-        except asyncio.CancelledError:
-            pass
 
-        post_action_keyboard = [
-            [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
-        ]
-        reply_markup = InlineKeyboardMarkup(post_action_keyboard)
-
+        reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")]])
         await context.bot.send_document(
-            chat_id=chat_id,
-            document=enhanced_stream,
-            filename="enhanced_hd_image.jpg",
-            caption=t(context, "success_enhance"),
-            parse_mode="Markdown",
-            reply_markup=reply_markup,
-            reply_to_message_id=photo_message_id,
+            chat_id=chat_id, document=enhanced_stream, filename="enhanced_hd_image.jpg",
+            caption=t(context, "success_enhance"), parse_mode="Markdown", reply_markup=reply_markup, reply_to_message_id=photo_message_id
         )
         await query.delete_message()
-        
         await notify_channel(user, "قام بزيادة دقة صورة (HD Upscale) 🚀", context)
-
     except Exception as e:
         loading_task.cancel()
-        try:
-            await loading_task
-        except asyncio.CancelledError:
-            pass
-        logging.error(f"خطأ أثناء تحسين الصورة: {e}")
+        logging.error(f"خطأ تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
 def _run_genai(instruction, image, models_order=None, generation_config=None):
-    """الدالة الداخلية للتنقل بين المفاتيح والنماذج بأسلوب متزامن متوافق مع run_in_executor"""
-    last_error = None
     models_to_try = models_order or AVAILABLE_MODELS
     gen_config = generation_config or GENERATION_CONFIG
 
     if not API_KEYS:
-        raise RuntimeError("لا توجد أي مفاتيح API صالحة في متغير API_KEYS.")
+        raise RuntimeError("لا توجد مفاتيح API_KEYS.")
 
+    last_error = None
     for api_key in API_KEYS:
         genai.configure(api_key=api_key)
         for model_name in models_to_try:
             try:
                 model = genai.GenerativeModel(model_name)
-                response = model.generate_content(
-                    [instruction, image],
-                    generation_config=gen_config,
-                    request_options={"timeout": 45},
-                )
+                response = model.generate_content([instruction, image], generation_config=gen_config, request_options={"timeout": 45})
                 if response and response.text:
                     return response.text.strip()
             except Exception as e:
-                # نسجل كل خطأ على حدة حتى نعرف بالضبط أي نموذج/مفتاح فشل ولماذا
-                masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-                logging.warning(f"فشل النموذج {model_name} بالمفتاح {masked_key}: {e}")
                 last_error = e
                 continue
-
-    raise last_error or RuntimeError("فشل الاتصال بكل المفاتيح والنماذج.")
+    raise last_error or RuntimeError("فشل الاتصال بـ API.")
 
 async def generate_prompt_with_fallback(instruction, image, models_order=None, generation_config=None):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run_genai, instruction, image, models_order, generation_config)
 
 def clean_generated_prompt(text: str) -> str:
-    """شبكة أمان: تزيل أي عناوين/تحليل/تنسيق Markdown قد يفلت من النموذج
-    رغم التعليمات، وتُبقي فقرة البرومبت النهائية فقط."""
     if not text:
         return text
-
     lines = text.strip().splitlines()
     kept = []
     for line in lines:
         stripped = line.strip()
-        if not stripped:
-            continue
-        # تجاهل عناوين Markdown أو خطوط فاصلة أو نقاط ترقيم أو أسطر تشير لـ "التحليل/البرومبت"
-        if stripped.startswith("#") or stripped.startswith("---") or stripped.startswith("==="):
-            continue
-        if re.match(r"^(\*|-|\d+[\.\)])\s+", stripped) and len(stripped) < 60:
-            continue
-        if re.match(r"^(البرومبت|Prompt|تحليل|Analysis)\s*[:：]?\s*$", stripped, re.IGNORECASE):
+        if not stripped or stripped.startswith("#") or stripped.startswith("---"):
             continue
         kept.append(stripped)
-
     result = " ".join(kept) if kept else text.strip()
-
-    # إزالة تنسيق Markdown الشائع (عريض/مائل/اقتباس)
     result = re.sub(r"\*\*(.*?)\*\*", r"\1", result)
     result = re.sub(r"\*(.*?)\*", r"\1", result)
-    result = result.strip("`>* \n")
-
-    return result.strip()
+    return result.strip("`>* \n")
 
 async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     selected_lang = context.user_data.get("selected_lang", "en")
@@ -532,135 +405,43 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
 
     loading_task = asyncio.create_task(animate_loading(query, context, "analyzing"))
 
-    output_rules_ar = (
-        "مهم جداً: أعطني البرومبت فقط، كفقرة نصية واحدة متصلة تبدأ مباشرة بوصف الصورة، "
-        "بدون أي مقدمات أو عناوين أو تحليل منفصل أو نقاط مرقمة أو عناصر Markdown (لا تستخدم ** ولا # ولا -)، "
-        "وبدون أي كلام جانبي قبل أو بعد الوصف. "
-        "مهم جداً أيضاً: اكتب نص البرومبت نفسه بالكامل باللغة العربية الفصحى فقط، ولا تستخدم أي "
-        "كلمة إنجليزية إطلاقاً (حتى لو كانت العادة في مواقع توليد الصور استخدام الإنجليزية)، "
-        "فالمطلوب هنا بالتحديد برومبت مكتوب بالعربية."
-    )
-    output_rules_en = (
-        "Important: give me only the prompt itself, as a single continuous paragraph starting directly "
-        "with the image description — no preamble, no headings, no separate analysis, no numbered lists, "
-        "no Markdown formatting (no **, no #, no -), and no extra commentary before or after."
-    )
+    output_rules_ar = "مهم: أعطني البرومبت فقط كفقرة واحدة متصلة باللغة العربية بدون علامات تنسيق ماركداون."
+    output_rules_en = "Important: give me only the prompt as a single continuous paragraph without formatting."
 
     system_instructions = {
-        ("ar", "short"): (
-            "اكتب برومبت قصير باللغة العربية لا يقل عن 70 كلمة ولا يزيد عن 80 كلمة لوصف هذه الصورة "
-            "لاستخدامه في الذكاء الاصطناعي، بحيث يذكر الموضوع الرئيسي وأهم تفاصيله الظاهرة، والإضاءة، "
-            "والألوان العامة، والأسلوب البصري، بأسلوب مكثف لكنه غني بالتفاصيل المهمة وليس مجرد جملة عابرة. "
-            f"{output_rules_ar}"
-        ),
-        ("ar", "medium"): (
-            "اكتب برومبت متوسط الطول باللغة العربية لا يقل عن 80 كلمة ولا يزيد عن 120 كلمة لوصف هذه الصورة "
-            "لاستخدامه في توليد الصور، بحيث يغطي الموضوع الرئيسي وتفاصيله، نوع اللقطة والزاوية تقريباً، "
-            "الإضاءة ومصدرها، الألوان السائدة، الخلفية، والأسلوب الفني العام. "
-            f"{output_rules_ar}"
-        ),
-        ("ar", "detailed"): (
-            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، ثم حوّل هذا التحليل إلى برومبت واحد "
-            "تفصيلي جداً باللغة العربية لا يقل عن 220 كلمة (ويفضل أن يتجاوزها)، بحيث يشرح بدقة متناهية ضمن "
-            "نفس الفقرة: الموضوع الرئيسي وكل تفاصيله الدقيقة (الملابس، تعابير الوجه أو الشكل، الوضعية، "
-            "الحركة)، نوع اللقطة وزاوية الكاميرا وبعد العدسة، مصدر الإضاءة واتجاهها ولونها وشدتها والظلال "
-            "الناتجة عنها، الألوان السائدة ودرجاتها والتباين بينها، الملمس الدقيق للأسطح والمواد (قماش، "
-            "جلد، فراء، معدن...)، الخلفية وكل العناصر المحيطة وعمق المجال، الجو العام والمزاج والقصة "
-            "الضمنية التي توحي بها الصورة، وأخيراً الأسلوب الفني أو نوع التصوير (سينمائي، واقعي، لوحة "
-            "رقمية، خيال علمي...الخ). اشرح كل عنصر من هذه العناصر بجملة أو أكثر ولا تكتفِ بذكره فقط. "
-            f"{output_rules_ar}"
-        ),
-        ("en", "short"): (
-            "Write a short image generation prompt of at least 70 words and no more than 80 words "
-            "describing this image, mentioning the main subject and its key visible details, the lighting, "
-            "the overall colors, and the visual style — dense but rich in meaningful detail, not just a "
-            f"single passing sentence. {output_rules_en}"
-        ),
-        ("en", "medium"): (
-            "Write a medium-length image generation prompt of at least 80 words and no more than 120 words "
-            "describing this image, covering the main subject and its details, roughly the shot type and "
-            f"angle, the lighting and its source, dominant colors, background, and overall artistic style. {output_rules_en}"
-        ),
-        ("en", "detailed"): (
-            "Analyze this image with maximum depth and precision, then turn that analysis into a single "
-            "ultra-detailed image generation prompt of at least 220 words (preferably more), explaining "
-            "with extreme precision within the same paragraph: the main subject and every fine detail "
-            "(clothing, expression or shape, pose, motion), the shot type, camera angle and lens focal "
-            "length, the lighting source, direction, color, intensity and the shadows it creates, the "
-            "dominant colors, their shades and the contrast between them, the fine texture of surfaces and "
-            "materials (fabric, leather, fur, metal...), the background and every surrounding element and "
-            "depth of field, the overall mood and atmosphere and the implicit story the image suggests, and "
-            "finally the artistic or cinematographic style (cinematic, photorealistic, digital painting, "
-            "sci-fi, etc). Explain each of these elements in a sentence or more, don't just name it. "
-            f"{output_rules_en}"
-        ),
+        ("ar", "short"): f"اكتب برومبت قصير باللغة العربية لوصف هذه الصورة لاستخدامه في الذكاء الاصطناعي. {output_rules_ar}",
+        ("ar", "medium"): f"اكتب برومبت متوسط باللغة العربية يغطي التفاصيل والزاوية والإضاءة. {output_rules_ar}",
+        ("ar", "detailed"): f"قم بتحليل الصورة بدقة عالية واكتب برومبت تفصيلي جداً باللغة العربية. {output_rules_ar}",
+        ("en", "short"): f"Write a short concise image prompt for AI generation. {output_rules_en}",
+        ("en", "medium"): f"Write a detailed medium image prompt covering lighting and composition. {output_rules_en}",
+        ("en", "detailed"): f"Write an ultra-detailed, long image prompt analyzing all elements. {output_rules_en}",
     }
 
     instruction = system_instructions.get((selected_lang, selected_length), "")
-
     if selected_ratio:
-        instruction += f"\nInclude aspect ratio: --ar {selected_ratio}"
+        instruction += f" --ar {selected_ratio}"
 
     image = Image.open(io.BytesIO(photo_bytes))
 
-    # للمستوى التفصيلي: نبدأ بالنموذج الأقوى (gemini-3.6-flash) بدل الأخف (flash-lite)،
-    # ونرفع سقف عدد الكلمات المسموح به حتى لا يُقطع الرد قبل اكتماله.
-    if selected_length == "detailed":
-        models_order = ["gemini-3.6-flash"] + [m for m in AVAILABLE_MODELS if m != "gemini-3.6-flash"]
-        generation_config = {**GENERATION_CONFIG, "max_output_tokens": 2500, "temperature": 0.9}
-    else:
-        models_order = None
-        generation_config = None
-
     try:
-        generated_prompt = await generate_prompt_with_fallback(
-            instruction, image, models_order=models_order, generation_config=generation_config
-        )
-    except Exception as e:
+        generated_prompt = await generate_prompt_with_fallback(instruction, image)
         loading_task.cancel()
-        try:
-            await loading_task
-        except asyncio.CancelledError:
-            pass
-        logging.error(f"فشل التوليد عبر كل المفاتيح: {e}")
-        err_str = str(e)
-        if "429" in err_str or "quota" in err_str.lower():
-            await query.message.reply_text(t(context, "quota_error"))
-        else:
-            await query.message.reply_text(t(context, "error_generation") + err_str)
-        return
 
-    loading_task.cancel()
-    try:
-        await loading_task
-    except asyncio.CancelledError:
-        pass
-
-    try:
         generated_prompt = clean_generated_prompt(generated_prompt)
-        if len(generated_prompt) > 3800:
-            generated_prompt = generated_prompt[:3800] + "..."
-
-        post_action_keyboard = [
+        reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton(t(context, "btn_retry"), callback_data="back_to_lang")],
-            [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")],
-        ]
-        reply_markup = InlineKeyboardMarkup(post_action_keyboard)
-        result_message = t(context, "success_title") + f"```\n{generated_prompt}\n```"
+            [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")]
+        ])
 
         await context.bot.send_message(
-            chat_id=chat_id,
-            text=result_message,
-            parse_mode="Markdown",
-            reply_markup=reply_markup,
-            reply_to_message_id=photo_message_id,
+            chat_id=chat_id, text=t(context, "success_title") + f"```\n{generated_prompt}\n```",
+            parse_mode="Markdown", reply_markup=reply_markup, reply_to_message_id=photo_message_id
         )
         await query.delete_message()
-
         await notify_channel(user, "قام باستخراج برومبت من صورة 📝", context)
-
     except Exception as e:
-        logging.error(f"خطأ إرسال الرسالة: {e}")
+        loading_task.cancel()
+        logging.error(f"فشل المعالجة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -669,9 +450,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data.startswith("uilang_"):
-        ui_lang = data.split("_")[1]
-        context.user_data["ui_lang"] = ui_lang
-
+        context.user_data["ui_lang"] = data.split("_")[1]
         if context.user_data.get("photo_bytes"):
             await show_main_mode_menu(context, query.edit_message_text)
         else:
@@ -692,15 +471,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "new_photo_request":
-        context.user_data.pop("photo_bytes", None)
-        context.user_data.pop("selected_lang", None)
-        context.user_data.pop("selected_length", None)
-        context.user_data.pop("selected_ratio", None)
-        context.user_data.pop("photo_message_id", None)
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text=t(context, "ready_for_new")
-        )
+        context.user_data.clear()
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=t(context, "ready_for_new"))
         return
 
     if data == "cancel":
@@ -710,10 +482,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data == "back_to_lang":
         await show_prompt_language_menu(context, query)
-        return
-
-    if data == "back_to_detail":
-        await show_detail_menu(context, query)
         return
 
     if data.startswith("lang_"):
@@ -727,32 +495,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not photo_bytes:
             await query.edit_message_text(t(context, "session_expired"))
             return
-        # نأخذ نفس مقاس/نسبة الصورة المرسلة تلقائياً بدون سؤال المستخدم
         context.user_data["selected_ratio"] = compute_image_ratio(photo_bytes)
         await generate_and_send_prompt(query, context, update.effective_chat.id, update.effective_user)
         return
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    """معالج أخطاء عام: يسجل أي استثناء يحدث داخل معالجة رسالة أو زر، بدل أن
-    يتسبب في توقف البوت بالكامل (وهو ما يجعل خدمة Render/UptimeRobot تظهر Down)."""
-    logging.error("حدث استثناء غير متوقع أثناء معالجة تحديث:", exc_info=context.error)
+    logging.error("حدث استثناء:", exc_info=context.error)
 
 def main():
-    if not TELEGRAM_TOKEN:
-        logging.error("❌ لم يتم تعيين TELEGRAM_TOKEN في متغيرات البيئة! لن يعمل البوت.")
-    if not API_KEYS:
-        logging.warning("⚠️ لم يتم العثور على أي مفتاح في متغير API_KEYS!")
-
     threading.Thread(target=start_health_server, daemon=True).start()
     threading.Thread(target=keep_alive_ping, daemon=True).start()
 
-    request = HTTPXRequest(
-        connect_timeout=30.0,
-        read_timeout=30.0,
-        write_timeout=30.0,
-        pool_timeout=30.0,
-    )
-
+    request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
     app = Application.builder().token(TELEGRAM_TOKEN).request(request).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -761,27 +515,13 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_error_handler(error_handler)
 
-    print("🤖 البوت يعمل بنجاح مع تدوير المفاتيح التلقائي...")
-
-    # حلقة تشغيل مستمرة: أي عطل غير متوقع (انقطاع شبكة، خطأ داخلي، إلخ) لا يوقف
-    # العملية بالكامل، بل يُعاد تشغيل البوت تلقائياً بعد مهلة قصيرة، حتى تبقى
-    # خدمة Render (وخادم فحص الصحة معها) شغّالة طول الوقت بدون تدخل يدوي.
-    retry_delay = 5
     while True:
         try:
             app.run_polling(drop_pending_updates=True, close_loop=False)
-            # إذا خرج run_polling بشكل طبيعي (إيقاف يدوي نظيف) لا داعي لإعادة التشغيل
-            break
-        except (KeyboardInterrupt, SystemExit):
-            logging.info("🛑 تم إيقاف البوت يدوياً.")
             break
         except Exception as e:
-            logging.error(
-                f"❌ توقف البوت بسبب خطأ غير متوقع، سيُعاد التشغيل خلال {retry_delay} ثانية: {e}",
-                exc_info=True,
-            )
-            time.sleep(retry_delay)
-            retry_delay = min(retry_delay * 2, 60)
+            logging.error(f"إعادة تشغيل البوت بسبب خطأ: {e}")
+            time.sleep(5)
 
 if __name__ == "__main__":
     main()
