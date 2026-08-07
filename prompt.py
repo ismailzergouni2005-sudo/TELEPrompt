@@ -41,7 +41,7 @@ KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
 raw_keys = os.getenv("API_KEYS", "")
 API_KEYS = [key.strip() for key in raw_keys.split(",") if key.strip()]
 
-WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9" 
+WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9"
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
 # ملاحظة: نماذج 1.5 و2.0 متوقفة تماماً، ونماذج 2.5 صارت غير متاحة
@@ -53,7 +53,7 @@ AVAILABLE_MODELS = [
 ]
 
 GENERATION_CONFIG = {
-    "max_output_tokens": 1500,
+    "max_output_tokens": 1800,
     "temperature": 0.7,
     "top_p": 0.9,
 }
@@ -69,6 +69,22 @@ STANDARD_RATIOS = [
 
 # رموز الساعة المتحركة المستخدمة كمؤشر انتظار بدل الساعة الرملية الثابتة ⏳
 CLOCK_FRAMES = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"]
+
+# أسماء الأقسام الثابتة التي يجب أن يلتزم بها البرومبت المُولَّد (بنفس الترتيب)
+SECTION_LABELS = [
+    "SUBJECT",
+    "POSE",
+    "FACE",
+    "CLOTHING",
+    "BACKGROUND",
+    "COMPOSITION",
+    "CAMERA",
+    "LIGHTING",
+    "COLOR",
+    "STYLE",
+    "DETAILS",
+]
+
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -88,6 +104,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
+
 def start_health_server():
     port = int(os.getenv("PORT", 10000))
     try:
@@ -96,6 +113,7 @@ def start_health_server():
         server.serve_forever()
     except Exception as e:
         logging.error(f"❌ فشل تشغيل خادم فحص الصحة على البورت {port}: {e}")
+
 
 def keep_alive_ping():
     """يرسل طلب HTTP دوري لرابط الخدمة نفسها (self-ping) كل KEEP_ALIVE_INTERVAL
@@ -119,6 +137,7 @@ def keep_alive_ping():
         except Exception as e:
             logging.warning(f"⚠️ فشل self-ping إلى {ping_url}: {e}")
 
+
 async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     target_id = CHANNEL_ID or ADMIN_ID
     if not target_id:
@@ -135,7 +154,7 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     first_name = clean_md(user.first_name) or "غير معروف"
     last_name = clean_md(user.last_name) or ""
     full_name = f"{first_name} {last_name}".strip()
-    
+
     channel_message = (
         "🔔 **إشعار جديد في البوت:**\n"
         "━━━━━━━━━━━━━━━━━━━\n"
@@ -155,6 +174,7 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logging.warning(f"تعذر إرسال الإشعار للقناة: {e}")
+
 
 def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     """رفع دقة الصورة محلياً: تكبير حقيقي عالي الجودة + تنظيف خفيف للضوضاء +
@@ -194,9 +214,10 @@ def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     output_stream.seek(0)
     return output_stream
 
+
 def get_welcome_text(user, ui_lang="ar"):
     user_mention = f"[{user.first_name}](tg://user?id={user.id})"
-    
+
     if ui_lang == "ar":
         return (
             f"✨ أهلاً بك يا {user_mention} في **بوت استخراج البرومبت وتحسين الصور**! ✨\n"
@@ -217,6 +238,7 @@ def get_welcome_text(user, ui_lang="ar"):
             "3️⃣ **Get Results:** Copy your prompt or download your high-res image!\n\n"
             "👇 **Start now by sending your image!**"
         )
+
 
 TEXTS = {
     "ar": {
@@ -277,9 +299,11 @@ TEXTS = {
     },
 }
 
+
 def t(context: ContextTypes.DEFAULT_TYPE, key: str) -> str:
     ui_lang = context.user_data.get("ui_lang", "ar")
     return TEXTS[ui_lang][key]
+
 
 async def animate_loading(query, context: ContextTypes.DEFAULT_TYPE, text_key: str, interval: float = 0.6):
     """يعرض ساعة متحركة (تدور بدل عقارب الساعة) كمؤشر انتظار مميز أثناء المعالجة،
@@ -298,6 +322,7 @@ async def animate_loading(query, context: ContextTypes.DEFAULT_TYPE, text_key: s
     except asyncio.CancelledError:
         pass
 
+
 def compute_image_ratio(photo_bytes) -> str:
     try:
         image = Image.open(io.BytesIO(photo_bytes))
@@ -308,10 +333,11 @@ def compute_image_ratio(photo_bytes) -> str:
         logging.warning(f"تعذر حساب نسبة أبعاد الصورة: {e}")
         return "1:1"
 
+
 async def send_welcome_payload(chat_id, user, context):
     ui_lang = context.user_data.get("ui_lang", "ar")
     welcome_msg = get_welcome_text(user, ui_lang)
-    
+
     try:
         await context.bot.send_photo(
             chat_id=chat_id,
@@ -331,6 +357,7 @@ async def send_welcome_payload(chat_id, user, context):
     except Exception as e:
         logging.warning(f"تعذر إرسال الملصق: {e}")
 
+
 async def show_ui_language_menu(send_func):
     keyboard = [
         [
@@ -344,6 +371,7 @@ async def show_ui_language_menu(send_func):
         reply_markup=reply_markup,
     )
 
+
 async def show_main_mode_menu(context, send_func):
     keyboard = [
         [InlineKeyboardButton(t(context, "btn_extract_prompt"), callback_data="mode_prompt")],
@@ -352,6 +380,7 @@ async def show_main_mode_menu(context, send_func):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await send_func(t(context, "choose_main_mode"), reply_markup=reply_markup, parse_mode="Markdown")
+
 
 async def show_prompt_language_menu(context, query):
     keyboard = [
@@ -366,6 +395,7 @@ async def show_prompt_language_menu(context, query):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(t(context, "choose_prompt_lang"), reply_markup=reply_markup, parse_mode="Markdown")
+
 
 async def show_detail_menu(context, query):
     keyboard = [
@@ -382,6 +412,7 @@ async def show_detail_menu(context, query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(t(context, "choose_detail"), reply_markup=reply_markup, parse_mode="Markdown")
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await notify_channel(update.effective_user, "قام بتشغيل البوت (/start)", context)
 
@@ -390,8 +421,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await send_welcome_payload(update.effective_chat.id, update.effective_user, context)
 
+
 async def language_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await show_ui_language_menu(update.message.reply_text)
+
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
@@ -415,6 +448,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     await show_main_mode_menu(context, update.message.reply_text)
+
 
 async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     photo_bytes = context.user_data.get("photo_bytes")
@@ -451,7 +485,7 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
             reply_to_message_id=photo_message_id,
         )
         await query.delete_message()
-        
+
         await notify_channel(user, "قام بزيادة دقة صورة (HD Upscale) 🚀", context)
 
     except Exception as e:
@@ -462,6 +496,7 @@ async def process_upscale(query, context: ContextTypes.DEFAULT_TYPE, chat_id, us
             pass
         logging.error(f"خطأ أثناء تحسين الصورة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
+
 
 def _run_genai(instruction, image, models_order=None, generation_config=None):
     """الدالة الداخلية للتنقل بين المفاتيح والنماذج بأسلوب متزامن متوافق مع run_in_executor"""
@@ -493,39 +528,48 @@ def _run_genai(instruction, image, models_order=None, generation_config=None):
 
     raise last_error or RuntimeError("فشل الاتصال بكل المفاتيح والنماذج.")
 
+
 async def generate_prompt_with_fallback(instruction, image, models_order=None, generation_config=None):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _run_genai, instruction, image, models_order, generation_config)
 
+
 def clean_generated_prompt(text: str) -> str:
-    """شبكة أمان: تزيل أي عناوين/تحليل/تنسيق Markdown قد يفلت من النموذج
-    رغم التعليمات، وتُبقي فقرة البرومبت النهائية فقط."""
+    """ينظف رد النموذج مع الحفاظ على البنية المقسمة إلى أقسام (سطر واحد لكل قسم:
+    SUBJECT / POSE / FACE / ... إلخ)، ويزيل فقط تنسيق Markdown الزائد أو أي أسطر
+    فارغة/دخيلة (عناوين تحليل، فواصل، مقدمات) قد يفلت النموذج بإضافتها رغم
+    التعليمات."""
     if not text:
         return text
 
     lines = text.strip().splitlines()
     kept = []
-    for line in lines:
-        stripped = line.strip()
+    for raw_line in lines:
+        stripped = raw_line.strip()
         if not stripped:
             continue
-        # تجاهل عناوين Markdown أو خطوط فاصلة أو نقاط ترقيم أو أسطر تشير لـ "التحليل/البرومبت"
-        if stripped.startswith("#") or stripped.startswith("---") or stripped.startswith("==="):
+
+        # إزالة تنسيق Markdown الشائع (عريض/مائل) على مستوى السطر
+        stripped = re.sub(r"\*\*(.*?)\*\*", r"\1", stripped)
+        stripped = re.sub(r"\*(.*?)\*", r"\1", stripped)
+        stripped = stripped.strip("`>* ")
+
+        # إزالة رموز عناوين Markdown (#) إن وُجدت مع إبقاء النص بعدها
+        stripped = re.sub(r"^#+\s*", "", stripped)
+
+        # تجاهل خطوط الفصل الفارغة من المحتوى
+        if not stripped or stripped.startswith("---") or stripped.startswith("==="):
             continue
-        if re.match(r"^(\*|-|\d+[\.\)])\s+", stripped) and len(stripped) < 60:
-            continue
+
+        # تجاهل أي مقدمة/خاتمة عامة مثل "البرومبت:" أو "Prompt:" بمفردها
         if re.match(r"^(البرومبت|Prompt|تحليل|Analysis)\s*[:：]?\s*$", stripped, re.IGNORECASE):
             continue
+
         kept.append(stripped)
 
-    result = " ".join(kept) if kept else text.strip()
-
-    # إزالة تنسيق Markdown الشائع (عريض/مائل/اقتباس)
-    result = re.sub(r"\*\*(.*?)\*\*", r"\1", result)
-    result = re.sub(r"\*(.*?)\*", r"\1", result)
-    result = result.strip("`>* \n")
-
+    result = "\n".join(kept) if kept else text.strip()
     return result.strip()
+
 
 async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, chat_id, user):
     selected_lang = context.user_data.get("selected_lang", "en")
@@ -540,66 +584,83 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
 
     loading_task = asyncio.create_task(animate_loading(query, context, "analyzing"))
 
+    # قالب الأقسام الثابت: يُطلب من النموذج أن يلتزم بهذه التسميات بالإنجليزية
+    # حرفياً (بأحرف كبيرة) في بداية كل سطر متبوعة بنقطتين، بغض النظر عن لغة
+    # محتوى الوصف نفسه، حتى يبقى شكل الإخراج موحداً بين اللغتين.
+    sections_block = "\n".join(f"{label}: ..." for label in SECTION_LABELS)
+
     output_rules_ar = (
-        "مهم جداً: أعطني البرومبت فقط، كفقرة نصية واحدة متصلة تبدأ مباشرة بوصف الصورة، "
-        "بدون أي مقدمات أو عناوين أو تحليل منفصل أو نقاط مرقمة أو عناصر Markdown (لا تستخدم ** ولا # ولا -)، "
-        "وبدون أي كلام جانبي قبل أو بعد الوصف. "
-        "مهم جداً أيضاً: اكتب نص البرومبت نفسه بالكامل باللغة العربية الفصحى فقط، ولا تستخدم أي "
-        "كلمة إنجليزية إطلاقاً (حتى لو كانت العادة في مواقع توليد الصور استخدام الإنجليزية)، "
-        "فالمطلوب هنا بالتحديد برومبت مكتوب بالعربية."
+        "مهم جداً وغير قابل للتفاوض: أعطني البرومبت مقسماً حصراً إلى الأقسام التالية بنفس الترتيب، "
+        "كل قسم في سطر مستقل يبدأ باسم القسم بالإنجليزية وبأحرف كبيرة تماماً كما هي مكتوبة هنا ثم نقطتان "
+        "ثم وصف القسم مباشرة بعدهما في نفس السطر (بدون فقرات فرعية وبدون تعداد نقطي داخل القسم):\n"
+        f"{sections_block}\n"
+        "اكتب محتوى كل قسم (أي كل ما بعد النقطتين) باللغة العربية الفصحى فقط، ولا تستخدم أي كلمة إنجليزية "
+        "إطلاقاً داخل الوصف (اسم القسم نفسه فقط يبقى بالإنجليزية كما هو). "
+        "لا تستخدم أي رموز Markdown مثل ** أو # أو - أو قوائم مرقمة. لا تكتب أي مقدمة أو خاتمة أو تعليق أو "
+        "تحليل خارج هذه الأقسام الإحدى عشر، ولا تُغيّر ترتيبها أو أسماءها أو تحذف أياً منها."
     )
     output_rules_en = (
-        "Important: give me only the prompt itself, as a single continuous paragraph starting directly "
-        "with the image description — no preamble, no headings, no separate analysis, no numbered lists, "
-        "no Markdown formatting (no **, no #, no -), and no extra commentary before or after."
+        "Important and non-negotiable: give me the prompt split strictly into the following sections in "
+        "this exact order, each section on its own line starting with the section name in uppercase exactly "
+        "as written here, followed by a colon and then the description directly on the same line (no "
+        "sub-paragraphs, no bullet points inside a section):\n"
+        f"{sections_block}\n"
+        "Write the content of every section in English. Do not use any Markdown formatting such as **, #, "
+        "-, or numbered lists. Do not add any preamble, closing remark, comment, or analysis outside these "
+        "eleven sections, and do not reorder, rename, or omit any of them."
     )
 
     system_instructions = {
         ("ar", "short"): (
-            "اكتب برومبت قصير باللغة العربية لا يقل عن 70 كلمة ولا يزيد عن 80 كلمة لوصف هذه الصورة "
-            "لاستخدامه في الذكاء الاصطناعي، بحيث يذكر الموضوع الرئيسي وأهم تفاصيله الظاهرة، والإضاءة، "
-            "والألوان العامة، والأسلوب البصري، بأسلوب مكثف لكنه غني بالتفاصيل المهمة وليس مجرد جملة عابرة. "
-            f"{output_rules_ar}"
+            "حلّل هذه الصورة، ثم اكتب برومبت احترافي قصير باللغة العربية بإجمالي عدد كلمات لا يقل عن 90 "
+            "كلمة ولا يزيد عن 100 كلمة موزّعة على الأقسام الإحدى عشر أدناه، بحيث يكون كل قسم موجزاً لكنه "
+            "دقيق ومباشر (جملة إلى جملتين لكل قسم كحد أقصى)، مع تغطية كل قسم فعلياً ولو باختصار شديد بدل "
+            f"تركه فارغاً أو مكرراً لقسم آخر. {output_rules_ar}"
         ),
         ("ar", "medium"): (
-            "اكتب برومبت متوسط الطول باللغة العربية لا يقل عن 80 كلمة ولا يزيد عن 120 كلمة لوصف هذه الصورة "
-            "لاستخدامه في توليد الصور، بحيث يغطي الموضوع الرئيسي وتفاصيله، نوع اللقطة والزاوية تقريباً، "
-            "الإضاءة ومصدرها، الألوان السائدة، الخلفية، والأسلوب الفني العام. "
-            f"{output_rules_ar}"
+            "حلّل هذه الصورة، ثم اكتب برومبت احترافي متوسط الطول باللغة العربية بإجمالي عدد كلمات لا يقل "
+            "عن 100 كلمة ولا يزيد عن 140 كلمة موزّعة على الأقسام الإحدى عشر أدناه، بحيث يشرح كل قسم بجملتين "
+            f"تقريباً بدقة كافية دون إطالة أو حشو. {output_rules_ar}"
         ),
         ("ar", "detailed"): (
-            "قم بتحليل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، ثم حوّل هذا التحليل إلى برومبت واحد "
-            "تفصيلي جداً باللغة العربية لا يقل عن 220 كلمة (ويفضل أن يتجاوزها)، بحيث يشرح بدقة متناهية ضمن "
-            "نفس الفقرة: الموضوع الرئيسي وكل تفاصيله الدقيقة (الملابس، تعابير الوجه أو الشكل، الوضعية، "
-            "الحركة)، نوع اللقطة وزاوية الكاميرا وبعد العدسة، مصدر الإضاءة واتجاهها ولونها وشدتها والظلال "
-            "الناتجة عنها، الألوان السائدة ودرجاتها والتباين بينها، الملمس الدقيق للأسطح والمواد (قماش، "
-            "جلد، فراء، معدن...)، الخلفية وكل العناصر المحيطة وعمق المجال، الجو العام والمزاج والقصة "
-            "الضمنية التي توحي بها الصورة، وأخيراً الأسلوب الفني أو نوع التصوير (سينمائي، واقعي، لوحة "
-            "رقمية، خيال علمي...الخ). اشرح كل عنصر من هذه العناصر بجملة أو أكثر ولا تكتفِ بذكره فقط. "
-            f"{output_rules_ar}"
+            "حلّل هذه الصورة بأقصى درجة ممكنة من الدقة والعمق، ثم اكتب برومبت احترافي تفصيلي جداً باللغة "
+            "العربية بإجمالي عدد كلمات لا يقل عن 250 كلمة (ويفضَّل أن يتجاوزها بوضوح)، موزّعة على الأقسام "
+            "الإحدى عشر أدناه، بحيث يُشرح كل قسم بدقة متناهية وبعدة جمل (وليس فقط بعبارة قصيرة): SUBJECT "
+            "يصف الموضوع الرئيسي وهويته البصرية بدقة، POSE يشرح وضعية الجسم والحركة والاتجاه بالتفصيل، FACE "
+            "يصف تعابير الوجه والملامح الدقيقة، CLOTHING يصف الملابس وخاماتها وألوانها وتفاصيلها، BACKGROUND "
+            "يصف الخلفية وكل عناصرها المحيطة، COMPOSITION يشرح توزيع العناصر وتوازن الكادر وعمق المجال، "
+            "CAMERA يحدد نوع اللقطة وزاوية الكاميرا وبعد العدسة التقريبي، LIGHTING يشرح مصدر الإضاءة واتجاهها "
+            "وشدتها ولونها والظلال الناتجة، COLOR يصف الألوان السائدة ودرجاتها والتباين بينها، STYLE يحدد "
+            "الأسلوب الفني أو نوع التصوير (سينمائي، واقعي، لوحة رقمية...)، وDETAILS يذكر أي تفاصيل دقيقة "
+            f"إضافية مهمة لم تُذكر في الأقسام السابقة (الملمس، الجو العام، القصة الضمنية...). {output_rules_ar}"
         ),
         ("en", "short"): (
-            "Write a short image generation prompt of at least 70 words and no more than 80 words "
-            "describing this image, mentioning the main subject and its key visible details, the lighting, "
-            "the overall colors, and the visual style — dense but rich in meaningful detail, not just a "
-            f"single passing sentence. {output_rules_en}"
+            "Analyze this image, then write a short professional image-generation prompt in English with a "
+            "total word count of at least 90 and no more than 100 words, distributed across the eleven "
+            "sections below, each section being brief but precise and direct (one to two sentences per "
+            "section maximum), actually covering every section even briefly instead of leaving one empty or "
+            f"duplicating another. {output_rules_en}"
         ),
         ("en", "medium"): (
-            "Write a medium-length image generation prompt of at least 80 words and no more than 120 words "
-            "describing this image, covering the main subject and its details, roughly the shot type and "
-            f"angle, the lighting and its source, dominant colors, background, and overall artistic style. {output_rules_en}"
+            "Analyze this image, then write a medium-length professional image-generation prompt in English "
+            "with a total word count of at least 100 and no more than 140 words, distributed across the "
+            "eleven sections below, explaining each section in roughly two sentences with sufficient "
+            f"precision, without padding or repetition. {output_rules_en}"
         ),
         ("en", "detailed"): (
-            "Analyze this image with maximum depth and precision, then turn that analysis into a single "
-            "ultra-detailed image generation prompt of at least 220 words (preferably more), explaining "
-            "with extreme precision within the same paragraph: the main subject and every fine detail "
-            "(clothing, expression or shape, pose, motion), the shot type, camera angle and lens focal "
-            "length, the lighting source, direction, color, intensity and the shadows it creates, the "
-            "dominant colors, their shades and the contrast between them, the fine texture of surfaces and "
-            "materials (fabric, leather, fur, metal...), the background and every surrounding element and "
-            "depth of field, the overall mood and atmosphere and the implicit story the image suggests, and "
-            "finally the artistic or cinematographic style (cinematic, photorealistic, digital painting, "
-            "sci-fi, etc). Explain each of these elements in a sentence or more, don't just name it. "
+            "Analyze this image with maximum depth and precision, then write an ultra-detailed professional "
+            "image-generation prompt in English with a total word count of at least 250 words (preferably "
+            "well beyond that), distributed across the eleven sections below, explaining each section with "
+            "extreme precision in several sentences (not just a short phrase): SUBJECT describes the main "
+            "subject and its precise visual identity, POSE explains body pose, motion and direction in "
+            "detail, FACE describes facial expression and fine features, CLOTHING describes garments, their "
+            "materials, colors and details, BACKGROUND describes the background and every surrounding "
+            "element, COMPOSITION explains element placement, frame balance and depth of field, CAMERA "
+            "specifies shot type, camera angle and approximate lens focal length, LIGHTING explains the "
+            "light source, its direction, intensity, color and the resulting shadows, COLOR describes the "
+            "dominant colors, their shades and the contrast between them, STYLE specifies the artistic or "
+            "cinematographic style (cinematic, photorealistic, digital painting...), and DETAILS lists any "
+            "additional fine details not covered above (texture, mood, implicit story...). "
             f"{output_rules_en}"
         ),
     }
@@ -612,10 +673,10 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
     image = Image.open(io.BytesIO(photo_bytes))
 
     # للمستوى التفصيلي: نبدأ بالنموذج الأقوى (gemini-3.6-flash) بدل الأخف (flash-lite)،
-    # ونرفع سقف عدد الكلمات المسموح به حتى لا يُقطع الرد قبل اكتماله.
+    # ونرفع سقف التوكنز حتى لا يُقطع الرد قبل اكتمال 250+ كلمة موزعة على 11 قسماً.
     if selected_length == "detailed":
         models_order = ["gemini-3.6-flash"] + [m for m in AVAILABLE_MODELS if m != "gemini-3.6-flash"]
-        generation_config = {**GENERATION_CONFIG, "max_output_tokens": 2500, "temperature": 0.9}
+        generation_config = {**GENERATION_CONFIG, "max_output_tokens": 3200, "temperature": 0.85}
     else:
         models_order = None
         generation_config = None
@@ -646,8 +707,10 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
 
     try:
         generated_prompt = clean_generated_prompt(generated_prompt)
-        if len(generated_prompt) > 3800:
-            generated_prompt = generated_prompt[:3800] + "..."
+        # حد أقصى للأحرف حتى تبقى الرسالة (مع العنوان وأسوار الكود) ضمن حدود
+        # تيليجرام (4096 حرفاً)، مع هامش أمان كافٍ للبرومبت التفصيلي متعدد الأسطر.
+        if len(generated_prompt) > 3500:
+            generated_prompt = generated_prompt[:3500] + "..."
 
         post_action_keyboard = [
             [InlineKeyboardButton(t(context, "btn_retry"), callback_data="back_to_lang")],
@@ -670,6 +733,7 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
     except Exception as e:
         logging.error(f"خطأ إرسال الرسالة: {e}")
         await query.message.reply_text(t(context, "error_generation") + str(e))
+
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -740,10 +804,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await generate_and_send_prompt(query, context, update.effective_chat.id, update.effective_user)
         return
 
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """معالج أخطاء عام: يسجل أي استثناء يحدث داخل معالجة رسالة أو زر، بدل أن
     يتسبب في توقف البوت بالكامل (وهو ما يجعل خدمة Render/UptimeRobot تظهر Down)."""
     logging.error("حدث استثناء غير متوقع أثناء معالجة تحديث:", exc_info=context.error)
+
 
 def main():
     if not TELEGRAM_TOKEN:
@@ -790,6 +856,7 @@ def main():
             )
             time.sleep(retry_delay)
             retry_delay = min(retry_delay * 2, 60)
+
 
 if __name__ == "__main__":
     main()
