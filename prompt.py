@@ -37,7 +37,7 @@ KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "600"))
 raw_keys = os.getenv("API_KEYS", "")
 API_KEYS = [key.strip() for key in raw_keys.split(",") if key.strip()]
 
-WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9](https://ibb.co/hJ49q7y9" 
+WELCOME_IMAGE_URL = "https://files.catbox.moe/phjs9e.png" 
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
 AVAILABLE_MODELS = [
