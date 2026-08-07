@@ -520,6 +520,10 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
         loading_task.cancel()
 
         generated_prompt = clean_generated_prompt(generated_prompt, selected_format)
+
+        if selected_ratio:
+            generated_prompt = f"{generated_prompt.rstrip()} --ar {selected_ratio}"
+
         reply_markup = InlineKeyboardMarkup([
             [InlineKeyboardButton(t(context, "btn_retry"), callback_data="back_to_lang")],
             [InlineKeyboardButton(t(context, "btn_new_photo"), callback_data="new_photo_request")]
