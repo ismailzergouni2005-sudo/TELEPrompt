@@ -43,6 +43,7 @@ WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDG
 
 AVAILABLE_MODELS = [
     "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
     "gemini-2.5-pro",
 ]
 
@@ -488,24 +489,35 @@ def _run_genai(instruction, image, models_order=None, generation_config=None):
     for api_key in API_KEYS:
         client = genai.Client(api_key=api_key)
         for model_name in models_to_try:
-            try:
-                config = types.GenerateContentConfig(
-                    max_output_tokens=gen_config.get("max_output_tokens", 1800),
-                    temperature=gen_config.get("temperature", 0.7),
-                    top_p=gen_config.get("top_p", 0.9),
-                )
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[instruction, image],
-                    config=config,
-                )
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as e:
-                masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
-                logging.warning(f"فشل النموذج {model_name} بالمفتاح {masked_key}: {e}")
-                last_error = e
-                continue
+            # محاولة الإرسال حتى 3 مرات مع معالجة الانتظار عند خطأ 429
+            for attempt in range(3):
+                try:
+                    config = types.GenerateContentConfig(
+                        max_output_tokens=gen_config.get("max_output_tokens", 1800),
+                        temperature=gen_config.get("temperature", 0.7),
+                        top_p=gen_config.get("top_p", 0.9),
+                    )
+                    response = client.models.generate_content(
+                        model=model_name,
+                        contents=[instruction, image],
+                        config=config,
+                    )
+                    if response and response.text:
+                        return response.text.strip()
+                except Exception as e:
+                    err_str = str(e)
+                    last_error = e
+                    # إذا كان الخطأ بسبب تجاوز معدل الطلبات 429 / RESOURCE_EXHAUSTED
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        logging.warning(
+                            f"⚠️ تجاوز الحد المسموح (429) للنموذج {model_name}. جاري الانتظار 12 ثانية... (محاولة {attempt + 1}/3)"
+                        )
+                        time.sleep(12)
+                        continue
+                    else:
+                        masked_key = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) > 12 else "***"
+                        logging.warning(f"فشل النموذج {model_name} بالمفتاح {masked_key}: {e}")
+                        break
 
     raise last_error or RuntimeError("فشل الاتصال بكل المفاتيح والنماذج.")
 
@@ -643,10 +655,10 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
     image = Image.open(io.BytesIO(photo_bytes))
 
     if selected_length == "detailed":
-        models_order = ["gemini-2.5-pro", "gemini-2.5-flash"]
+        models_order = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
         generation_config = {**GENERATION_CONFIG, "max_output_tokens": 3200, "temperature": 0.85}
     else:
-        models_order = None
+        models_order = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
         generation_config = None
 
     try:
@@ -661,7 +673,7 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
             pass
         logging.error(f"فشل التوليد عبر كل المفاتيح: {e}")
         err_str = str(e)
-        if "429" in err_str or "quota" in err_str.lower():
+        if "429" in err_str or "quota" in err_str.lower() or "RESOURCE_EXHAUSTED" in err_str:
             await query.message.reply_text(t(context, "quota_error"))
         else:
             await query.message.reply_text(t(context, "error_generation") + err_str)
@@ -798,7 +810,7 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_error_handler(error_handler)
 
-    print("🤖 البوت يعمل بنجاح مع تدوير المفاتيح التلقائي...")
+    print("🤖 البوت يعمل بنجاح مع تدوير المفاتيح التلقائي ومعالجة أخطاء 429...")
 
     retry_delay = 5
     while True:
