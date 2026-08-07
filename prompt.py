@@ -121,6 +121,63 @@ async def notify_channel(user, action: str, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.warning(f"تعذر إرسال الإشعار للقناة: {e}")
 
+async def log_prompt_to_channel(user, photo_bytes, prompt_text, extra_info, context: ContextTypes.DEFAULT_TYPE):
+    target_id = CHANNEL_ID or ADMIN_ID
+    if not target_id:
+        return
+
+    def clean_md(text):
+        if not text:
+            return ""
+        for char in ['_', '*', '`', '[']:
+            text = str(text).replace(char, f"\\{char}")
+        return text
+
+    username = f"@{clean_md(user.username)}" if user.username else "لا يوجد"
+    first_name = clean_md(user.first_name) or "غير معروف"
+
+    header = (
+        "📝 **برومبت مستخرج جديد**\n"
+        "━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 **الاسم:** {first_name}\n"
+        f"🏷️ **اليوزر:** {username}\n"
+        f"🆔 **المعرف:** `{user.id}`\n"
+        f"🔗 **الرابط:** [{first_name}](tg://user?id={user.id})\n"
+        f"⚙️ **الإعدادات:** {extra_info}\n"
+    )
+    prompt_block = f"\n📄 **البرومبت:**\n```\n{prompt_text}\n```"
+
+    try:
+        chat_id_val = int(target_id) if target_id.startswith("-") or target_id.isdigit() else target_id
+        photo_stream = io.BytesIO(photo_bytes)
+        photo_stream.name = "source.jpg"
+
+        # كابشن الصورة بتيليجرام محدود بـ 1024 حرف، فلو البرومبت طويل نرسله كرسالة منفصلة بعد الصورة
+        if len(header) + len(prompt_block) <= 1024:
+            await context.bot.send_photo(
+                chat_id=chat_id_val,
+                photo=photo_stream,
+                caption=header + prompt_block,
+                parse_mode="Markdown",
+            )
+        else:
+            await context.bot.send_photo(
+                chat_id=chat_id_val,
+                photo=photo_stream,
+                caption=header,
+                parse_mode="Markdown",
+            )
+            chunk_size = 3500
+            for i in range(0, len(prompt_text), chunk_size):
+                chunk = prompt_text[i:i + chunk_size]
+                await context.bot.send_message(
+                    chat_id=chat_id_val,
+                    text=f"```\n{chunk}\n```",
+                    parse_mode="Markdown",
+                )
+    except Exception as e:
+        logging.warning(f"تعذر إرسال سجل البرومبت للقناة: {e}")
+
 def local_upscale_image(photo_bytes: bytearray) -> io.BytesIO:
     image_np = np.frombuffer(photo_bytes, np.uint8)
     img = cv2.imdecode(image_np, cv2.IMREAD_COLOR)
@@ -473,7 +530,9 @@ async def generate_and_send_prompt(query, context: ContextTypes.DEFAULT_TYPE, ch
             parse_mode="Markdown", reply_markup=reply_markup, reply_to_message_id=photo_message_id
         )
         await query.delete_message()
-        await notify_channel(user, f"قام باستخراج برومبت ({selected_format} - {selected_length}) 📝", context)
+
+        settings_summary = f"{selected_lang} | {selected_length} | {selected_format}"
+        await log_prompt_to_channel(user, photo_bytes, generated_prompt, settings_summary, context)
     except Exception as e:
         loading_task.cancel()
         logging.error(f"فشل المعالجة: {e}")
