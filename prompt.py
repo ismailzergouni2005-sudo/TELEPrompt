@@ -45,7 +45,7 @@ AVAILABLE_MODELS = [
     "gemini-2.0-flash",
     "gemini-1.5-flash-latest",
 ]
-]
+
 
 GENERATION_CONFIG = {
     "max_output_tokens": 1500,
