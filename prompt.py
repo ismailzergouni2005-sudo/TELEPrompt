@@ -41,9 +41,9 @@ WELCOME_IMAGE_URL = "https://ibb.co/hJ49q7y9"
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
 AVAILABLE_MODELS = [
-    "gemini-2.5-flash",
+    "gemini-3.6-flash",
     "gemini-2.0-flash",
-    "gemini-1.5-flash-latest",
+    "gemini-1.5-flash",
 ]
 
 
