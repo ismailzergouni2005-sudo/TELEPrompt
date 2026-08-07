@@ -41,11 +41,9 @@ WELCOME_IMAGE_URL = "[https://ibb.co/hJ49q7y9](https://ibb.co/hJ49q7y9)"
 WELCOME_STICKER_ID = "CAACAgIAAxkBAAEtNrJqciCsb_KyhKNta-pPJzCKUefSigACVAADQbVWDGq3-McIjQH6PQQ"
 
 AVAILABLE_MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash-lite",
+    "gemini-3.6-flash",        # مجاني ضمن حدود، جودة عالية
+    "gemini-3.5-flash-lite",   # مجاني، أسرع وأخف للاستخدام المكثف
 ]
-
 GENERATION_CONFIG = {
     "max_output_tokens": 2500,
     "temperature": 0.7,
